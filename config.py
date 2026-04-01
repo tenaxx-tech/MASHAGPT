@@ -14,7 +14,7 @@ if not MASHA_API_KEY:
     print("❌ MASHA_API_KEY не задан")
     sys.exit(1)
 
-MASHA_BASE_URL = "https://api.mashagpt.ru"   # фиксированный правильный URL
+MASHA_BASE_URL = "https://api.mashagpt.ru/v1"
 # Если хотите использовать переменную окружения, раскомментируйте следующую строку:
 # MASHA_BASE_URL = os.getenv("MASHA_BASE_URL", "https://api.mashagpt.ru/v1")
 
