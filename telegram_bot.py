@@ -1,34 +1,26 @@
 import asyncio
 import io
-import json
 import logging
-import time
 from typing import List, Tuple
 
 import aiohttp
-import requests
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, ConversationHandler
 )
 
-from config import (
-    TELEGRAM_TOKEN, DEEPSEEK_API_KEY,
-    MASHA_API_KEY, MASHA_BASE_URL
-)
+from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
 from database import (
     init_db, save_message, get_history, clear_history, update_user_activity
 )
 
-# Настройка логов
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Состояния ConversationHandler
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, DIALOG = range(5)
 
 # ------------------------------------------------------------------
@@ -51,26 +43,22 @@ def get_cancel_keyboard():
     )
 
 # ------------------------------------------------------------------
-# Функции для работы с DeepSeek (текст)
+# Masha API (текст, изображения)
 # ------------------------------------------------------------------
-async def deepseek_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
-    """
-    Вызов DeepSeek API с учётом истории.
-    history: список кортежей (role, content) – user/assistant.
-    """
+async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
+    """Генерация текста через Masha (модель gpt-5-nano)"""
     messages = []
-    # Добавляем историю (последние 5 сообщений)
     for role, content in history[-5:]:
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    url = "https://api.deepseek.com/v1/chat/completions"
+    url = f"{MASHA_BASE_URL}/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        "x-api-key": MASHA_API_KEY
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": "gpt-5-nano",
         "messages": messages,
         "max_tokens": 1024,
         "temperature": 0.7
@@ -80,20 +68,14 @@ async def deepseek_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
         async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                logger.error(f"DeepSeek API error {resp.status}: {error_text}")
-                raise Exception(f"DeepSeek error: {resp.status}")
+                logger.error(f"Masha API error {resp.status}: {error_text}")
+                raise Exception(f"Masha error: {resp.status}")
             data = await resp.json()
             return data["choices"][0]["message"]["content"]
 
-# ------------------------------------------------------------------
-# Функции для Masha (изображения, видео – остаются как заглушки)
-# ------------------------------------------------------------------
 async def masha_image_generate(prompt: str) -> bytes:
-    """Генерация изображения через Masha Nano Banana"""
-    # Если ключ Masha не задан, возвращаем ошибку
-    if not MASHA_API_KEY:
-        raise Exception("MASHA_API_KEY не задан. Генерация изображений недоступна.")
-    url = f"{MASHA_BASE_URL}/images/generations"
+    """Генерация изображения через Masha (nano-banana-2)"""
+    url = f"{MASHA_BASE_URL}/v1/images/generations"
     headers = {
         "Content-Type": "application/json",
         "x-api-key": MASHA_API_KEY
@@ -132,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "🤖 *Привет! Я бот с поддержкой ИИ.*\n\n"
         "Я умею:\n"
-        "✏️ генерировать текст (DeepSeek)\n"
+        "✏️ генерировать текст (Masha GPT-5-nano)\n"
         "🖼 создавать изображения (Nano Banana)\n"
         "🎬 генерировать видео (в разработке)\n\n"
         "*Я помню контекст диалога!* Просто отправляйте сообщения, и я буду отвечать, учитывая историю.\n"
@@ -196,7 +178,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
 
     try:
         await update.message.reply_chat_action("typing")
-        answer = await deepseek_generate(user_message, history)
+        answer = await masha_text_generate(user_message, history)
         await update.message.reply_text(answer, reply_markup=get_cancel_keyboard())
         save_message(user_id, "assistant", answer)
     except Exception as e:
@@ -266,8 +248,8 @@ def main():
     if not TELEGRAM_TOKEN:
         logger.error("TELEGRAM_TOKEN не задан")
         return
-    if not DEEPSEEK_API_KEY:
-        logger.error("DEEPSEEK_API_KEY не задан")
+    if not MASHA_API_KEY:
+        logger.error("MASHA_API_KEY не задан")
         return
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -288,7 +270,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_dialog))
     app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    logger.info("Бот запущен (текст: DeepSeek, изображения: Masha)")
+    logger.info("Бот запущен (текст и изображения через Masha)")
     app.run_polling()
 
 if __name__ == "__main__":
