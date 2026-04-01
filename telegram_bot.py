@@ -288,7 +288,7 @@ async def send_long_message(update: Update, text: str):
         await update.message.reply_text(text[i:i+4096])
 
 async def create_task(model: str, payload: dict, retries=3):
-    url = f"{MASHA_BASE_URL}/v1/tasks/{model}"
+    url = f"{MASHA_BASE_URL}/tasks/{model}"
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     for attempt in range(retries):
         try:
@@ -345,7 +345,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    url = f"{MASHA_BASE_URL}/v1/chat/completions"
+    url = f"{MASHA_BASE_URL}/chat/completions"
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     payload = {
         "model": model,
