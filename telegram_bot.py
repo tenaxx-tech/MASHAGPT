@@ -1,7 +1,7 @@
 import asyncio
 import io
-import logging
 import json
+import logging
 from typing import List, Tuple
 
 import aiohttp
@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ------------------- Состояния -------------------
-MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG = range(8)
+MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 
 # ------------------- Цены моделей (в промтах) -------------------
 MODEL_PRICES = {
@@ -354,7 +354,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
     payload = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": 4096,
+        "max_completion_tokens": 4096,   # Увеличено для учёта reasoning
         "temperature": 1.0
     }
 
@@ -717,22 +717,13 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return DIALOG
             else:
+                # Сохраняем категорию для обработки в AWAIT_PROMPT
+                context.user_data['media_category'] = category
                 await update.message.reply_text(
                     f"Выбрана модель: {label}\n\nВведите запрос:",
                     reply_markup=get_cancel_keyboard()
                 )
-                if category == "image":
-                    return IMAGE_GEN
-                elif category == "video":
-                    return VIDEO_GEN
-                elif category == "edit":
-                    return EDIT_GEN
-                elif category == "audio":
-                    return AUDIO_GEN
-                elif category == "avatar":
-                    return AVATAR_GEN
-                else:
-                    return MAIN_MENU
+                return AWAIT_PROMPT
 
     await update.message.reply_text("Пожалуйста, выберите модель из списка.")
     return MAIN_MENU
@@ -755,6 +746,7 @@ async def handle_audio_selection(update: Update, context: ContextTypes.DEFAULT_T
 async def handle_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await handle_model_selection(update, context, "avatar")
 
+# Универсальный обработчик для ввода текста (диалог)
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
     user_id = update.effective_user.id
     if user_message is None:
@@ -806,15 +798,22 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
             add_balance(user_id, price)
     return DIALOG
 
-async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str) -> int:
+# Обработчик для медиа (изображения, видео, обработка, аудио)
+async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     model = context.user_data.get('selected_model')
     price = context.user_data.get('model_price', 0)
+    category = context.user_data.get('media_category')
     text = update.message.text
 
+    # Обработка кнопки возврата
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    if not category:
+        await update.message.reply_text("Ошибка: не выбрана категория.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
     if not model:
@@ -826,6 +825,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("❌ Не удалось сформировать запрос для этой модели.")
         return MAIN_MENU
 
+    # Проверка баланса для платных моделей
     if price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(
@@ -837,6 +837,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
+    # Для бесплатных изображений – проверяем лимит
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -869,20 +870,21 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+# Устаревшие обработчики – оставлены для совместимости, но не используются в states
 async def handle_text_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context, "text")
+    return await handle_media_input(update, context)
 
 async def handle_image_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context, "image")
+    return await handle_media_input(update, context)
 
 async def handle_video_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context, "video")
+    return await handle_media_input(update, context)
 
 async def handle_edit_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context, "edit")
+    return await handle_media_input(update, context)
 
 async def handle_audio_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context, "audio")
+    return await handle_media_input(update, context)
 
 # ------------------- Запуск -------------------
 def main():
@@ -906,6 +908,7 @@ def main():
             AUDIO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_audio_selection)],
             AVATAR_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_selection)],
             DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_dialog)],
+            AWAIT_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_input)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
