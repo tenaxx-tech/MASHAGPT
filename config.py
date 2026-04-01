@@ -9,7 +9,7 @@ if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN не задан")
     sys.exit(1)
 
-MASHA_API_KEY = os.getenv("MASHA_API_KEY")
+MASHA_API_KEY = os.getenv("MASHA_API_KEYS")
 if not MASHA_API_KEY:
     print("❌ MASHA_API_KEY не задан")
     sys.exit(1)
