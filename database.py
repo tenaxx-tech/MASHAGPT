@@ -1,4 +1,3 @@
-# database.py
 import sqlite3
 import logging
 import time
@@ -13,7 +12,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    # Таблица пользователей: баланс и текущая модель (оставляем для совместимости)
+    # Таблица пользователей: баланс и текущая модель
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -28,23 +27,23 @@ def init_db():
         CREATE TABLE IF NOT EXISTS chat_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
-            role TEXT,  -- 'user' или 'assistant'
+            role TEXT,
             content TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Таблица для учёта использования изображений (бесплатный лимит 5 в неделю)
+    # Таблица учёта бесплатных изображений
     c.execute('''
         CREATE TABLE IF NOT EXISTS weekly_image_usage (
             user_id INTEGER,
-            week_start TEXT,  -- дата понедельника в формате YYYY-MM-DD
+            week_start TEXT,
             count INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, week_start)
         )
     ''')
 
-    # Таблица для хранения OAuth-токенов DonationAlerts (для будущих донатов)
+    # Таблица для OAuth-токенов DonationAlerts
     c.execute('''
         CREATE TABLE IF NOT EXISTS donation_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +58,7 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована")
 
-# ----- Работа с балансом и активностью -----
+# ----- Работа с балансом -----
 def get_user_balance(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -100,7 +99,7 @@ def update_user_activity(user_id):
     conn.commit()
     conn.close()
 
-# ----- Работа с историей диалога -----
+# ----- История диалогов -----
 def save_message(user_id, role, content):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -112,7 +111,6 @@ def save_message(user_id, role, content):
     conn.close()
 
 def get_history(user_id, limit=10):
-    """Возвращает последние limit сообщений для пользователя"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -122,7 +120,6 @@ def get_history(user_id, limit=10):
     ''', (user_id, limit))
     rows = c.fetchall()
     conn.close()
-    # Возвращаем в хронологическом порядке (от старых к новым)
     return list(reversed(rows))
 
 def clear_history(user_id):
@@ -132,15 +129,13 @@ def clear_history(user_id):
     conn.commit()
     conn.close()
 
-# ----- Работа с лимитом изображений -----
+# ----- Лимит изображений -----
 def get_week_start():
-    """Возвращает дату понедельника текущей недели в формате YYYY-MM-DD"""
     today = datetime.now().date()
     start = today - timedelta(days=today.weekday())
     return start.isoformat()
 
 def get_weekly_image_count(user_id):
-    """Возвращает количество использований изображений за текущую неделю"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     week_start = get_week_start()
@@ -151,7 +146,6 @@ def get_weekly_image_count(user_id):
     return row[0] if row else 0
 
 def increment_weekly_image_count(user_id):
-    """Увеличивает счётчик использований изображений на 1"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     week_start = get_week_start()
@@ -163,7 +157,7 @@ def increment_weekly_image_count(user_id):
     conn.commit()
     conn.close()
 
-# ----- Работа с токенами DonationAlerts (опционально) -----
+# ----- DonationAlerts токены -----
 def save_donation_token(access_token, refresh_token, expires_in):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -180,10 +174,8 @@ def get_donation_token():
     c.execute("SELECT access_token, refresh_token, expires_at FROM donation_tokens ORDER BY id DESC LIMIT 1")
     row = c.fetchone()
     conn.close()
-    if row:
-        access_token, refresh_token, expires_at = row
-        if expires_at > int(time.time()):
-            return access_token
+    if row and row[2] > int(time.time()):
+        return row[0]
     return None
 
 def update_donation_token(access_token, refresh_token, expires_in):
