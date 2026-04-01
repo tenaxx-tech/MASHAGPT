@@ -351,11 +351,14 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
         "model": model,
         "messages": messages,
         "max_completion_tokens": 1024,
-        "temperature": 1.0   # Исправлено: только значение 1.0 принимается моделями
+        "temperature": 1.0
     }
 
+    logger.info(f"Отправка запроса к MashaGPT: модель={model}, длина промпта={len(prompt)}")
+
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
+        async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            logger.info(f"Получен ответ от MashaGPT, статус={resp.status}")
             if resp.status != 200:
                 error_text = await resp.text()
                 logger.error(f"Masha API error {resp.status}: {error_text}")
