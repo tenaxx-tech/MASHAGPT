@@ -2,24 +2,20 @@ import asyncio
 import io
 import json
 import logging
-import os
 import time
-import sqlite3
-from typing import Optional
-import requests
+from typing import List, Tuple
+
 import aiohttp
+import requests
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, ConversationHandler, PreCheckoutQueryHandler
+    ContextTypes, ConversationHandler
 )
-from PIL import Image
 
-# Импорт наших модулей
-from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL, DEEPSEEK_API_KEY
+from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
 from database import (
-    init_db, get_user_balance, add_balance, deduct_balance,
-    save_generation, get_weekly_image_count, increment_weekly_image_count
+    init_db, save_message, get_history, clear_history, update_user_activity
 )
 
 # Настройка логов
@@ -29,284 +25,276 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ------------------- Состояния -------------------
-CHOOSING_ACTION, AWAITING_TEXT_PROMPT, AWAITING_IMAGE_PROMPT = range(3)
+# Состояния ConversationHandler
+MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, DIALOG = range(5)
 
-# ------------------- Клавиатуры -------------------
+# ------------------------------------------------------------------
+# Клавиатуры
+# ------------------------------------------------------------------
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("✏️ Текст (бесплатно)")],
-        [KeyboardButton("🖼 Изображения (бесплатно, 5/неделя)")],
-        [KeyboardButton("💰 Мой баланс")],
-        [KeyboardButton("⭐ Пополнить звёзды")],
+        [KeyboardButton("✏️ Генерация текста")],
+        [KeyboardButton("🖼 Генерация изображения")],
+        [KeyboardButton("🎬 Генерация видео")],
+        [KeyboardButton("🧹 Сбросить диалог")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def get_cancel_keyboard():
-    return ReplyKeyboardMarkup([[KeyboardButton("❌ Отмена")]], resize_keyboard=True, one_time_keyboard=True)
-
-# ------------------- Вспомогательные функции для MashaGPT -------------------
-async def create_task(model, payload, retries=3):
-    url = f"{MASHA_BASE_URL}/tasks/{model}"
-    headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 429:
-                        wait = 2 ** attempt
-                        logger.warning(f"429 Too Many Requests, повтор через {wait} сек")
-                        await asyncio.sleep(wait)
-                        continue
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    return data.get("id")
-        except Exception as e:
-            logger.error(f"Ошибка создания задачи {model}: {e}")
-            if attempt == retries - 1:
-                return None
-            await asyncio.sleep(2)
-    return None
-
-async def get_task_status(task_id):
-    url = f"{MASHA_BASE_URL}/tasks/{task_id}"
-    headers = {"x-api-key": MASHA_API_KEY}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                resp.raise_for_status()
-                return await resp.json()
-    except Exception as e:
-        logger.error(f"Ошибка получения статуса {task_id}: {e}")
-        return None
-
-async def wait_for_task(task_id, timeout=180):
-    start = time.time()
-    while time.time() - start < timeout:
-        data = await get_task_status(task_id)
-        if not data:
-            return None
-        status = data.get("status")
-        if status == "COMPLETED":
-            return data
-        elif status == "FAILED":
-            logger.error(f"Задача {task_id} провалилась: {data.get('errorMessage')}")
-            return None
-        await asyncio.sleep(2)
-    logger.error(f"Таймаут задачи {task_id}")
-    return None
-
-async def generate_text(prompt, model="gpt-5-nano", retries=3):
-    url = f"{MASHA_BASE_URL}/chat/completions"
-    headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1024,
-        "temperature": 0.7,
-    }
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status == 429:
-                        wait = 2 ** (attempt + 1)
-                        logger.warning(f"429 Too Many Requests, повтор через {wait} сек")
-                        await asyncio.sleep(wait)
-                        continue
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    return data["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.error(f"Ошибка генерации текста (попытка {attempt+1}): {e}")
-            if attempt == retries - 1:
-                return None
-            await asyncio.sleep(2)
-    return None
-
-async def generate_image(prompt, model="nano-banana-2"):
-    # Упрощённая версия для изображений
-    payload = {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"}
-    task_id = await create_task(model, payload)
-    if not task_id:
-        raise Exception("Ошибка создания задачи")
-    result = await wait_for_task(task_id)
-    if not result:
-        raise Exception("Таймаут или ошибка")
-    outputs = result.get("output", [])
-    if not outputs:
-        raise Exception("Нет output в ответе")
-    media_url = outputs[0].get("url")
-    if not media_url:
-        raise Exception("Нет URL в ответе")
-    async with aiohttp.ClientSession() as session:
-        async with session.get(media_url) as resp:
-            return await resp.read()
-
-# ------------------- Обработчики -------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    init_db()
-    await update.message.reply_text(
-        "🌟 Добро пожаловать в AI-бот!\n\n"
-        "✏️ Текст (бесплатно, без лимита)\n"
-        "🖼 Изображения (бесплатно, 5 в неделю)\n\n"
-        "Выберите действие:",
-        reply_markup=get_main_keyboard()
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("🔙 Главное меню")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
     )
-    return CHOOSING_ACTION
+
+# ------------------------------------------------------------------
+# Вспомогательные функции для работы с Masha API
+# ------------------------------------------------------------------
+async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
+    """
+    Вызов Masha API для генерации текста с учётом истории.
+    history: список кортежей (role, content)
+    """
+    messages = []
+    # Добавляем историю (до 5 последних сообщений, чтобы не перегружать контекст)
+    for role, content in history[-5:]:
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": prompt})
+
+    url = f"{MASHA_BASE_URL}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": MASHA_API_KEY
+    }
+    payload = {
+        "model": "gpt-5-nano",   # бесплатная модель
+        "messages": messages,
+        "max_tokens": 1024,
+        "temperature": 0.7
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(f"Masha API error {resp.status}: {error_text}")
+                raise Exception(f"API error: {resp.status}")
+            data = await resp.json()
+            return data["choices"][0]["message"]["content"]
+
+async def masha_image_generate(prompt: str) -> bytes:
+    """Генерация изображения через Nano Banana"""
+    # Предполагается, что у Masha есть эндпоинт для генерации изображений
+    # Формат может отличаться, уточните в документации.
+    # Ниже пример, адаптируйте под реальный API.
+    url = f"{MASHA_BASE_URL}/images/generations"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": MASHA_API_KEY
+    }
+    payload = {
+        "model": "nano-banana-2",
+        "prompt": prompt,
+        "aspect_ratio": "1:1",
+        "size": "1024x1024"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(f"Image API error {resp.status}: {error_text}")
+                raise Exception(f"Image API error: {resp.status}")
+            data = await resp.json()
+            # Допустим, API возвращает URL изображения
+            image_url = data.get("data", [{}])[0].get("url")
+            if not image_url:
+                raise Exception("No image URL in response")
+            # Скачиваем изображение
+            async with session.get(image_url) as img_resp:
+                return await img_resp.read()
+
+async def masha_video_generate(prompt: str) -> str:
+    """Заглушка для видео (Sora пока недоступна бесплатно)"""
+    # Возвращаем сообщение-заглушку
+    return "🎬 Генерация видео временно недоступна. Функция в разработке."
+
+# ------------------------------------------------------------------
+# Обработчики
+# ------------------------------------------------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Команда /start – инициализация"""
+    init_db()
+    user_id = update.effective_user.id
+    update_user_activity(user_id)
+    await update.message.reply_text(
+        "🤖 *Привет! Я бот с поддержкой ИИ.*\n\n"
+        "Я умею:\n"
+        "✏️ генерировать текст\n"
+        "🖼 создавать изображения\n"
+        "🎬 генерировать видео (в разработке)\n\n"
+        "*Я помню контекст диалога!* Просто отправляйте сообщения, и я буду отвечать, учитывая историю.\n"
+        "Чтобы сменить режим или сбросить историю, используйте кнопки внизу.\n\n"
+        "Выберите действие:",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Возврат в главное меню"""
     await update.message.reply_text(
-        "❌ Отменено. Возвращаюсь в главное меню.",
+        "🔙 Возвращаемся в главное меню.",
         reply_markup=get_main_keyboard()
     )
-    return CHOOSING_ACTION
+    return MAIN_MENU
 
-async def send_typing_indicator(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        while True:
-            await context.bot.send_chat_action(chat_id=chat_id, action='typing')
-            await asyncio.sleep(4)
-    except asyncio.CancelledError:
-        pass
+async def clear_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Сброс истории диалога"""
+    user_id = update.effective_user.id
+    clear_history(user_id)
+    await update.message.reply_text(
+        "🧹 История диалога очищена. Начинаем с чистого листа.",
+        reply_markup=get_main_keyboard()
+    )
+    return MAIN_MENU
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
-    if text == "✏️ Текст (бесплатно)":
+    if text == "✏️ Генерация текста":
         await update.message.reply_text(
-            "Введите текст для генерации (можно использовать любую из бесплатных моделей):",
+            "Введите ваш запрос. Я буду помнить контекст, пока вы не вернётесь в главное меню.",
             reply_markup=get_cancel_keyboard()
         )
-        return AWAITING_TEXT_PROMPT
-    elif text == "🖼 Изображения (бесплатно, 5/неделя)":
+        return TEXT_GEN
+    elif text == "🖼 Генерация изображения":
         await update.message.reply_text(
-            "Введите описание изображения:",
+            "Опишите, что нужно сгенерировать (изображение будет создано по модели Nano Banana):",
             reply_markup=get_cancel_keyboard()
         )
-        return AWAITING_IMAGE_PROMPT
-    elif text == "💰 Мой баланс":
-        user_id = update.effective_user.id
-        bal = get_user_balance(user_id)
-        img_used = get_weekly_image_count(user_id)
+        return IMAGE_GEN
+    elif text == "🎬 Генерация видео":
         await update.message.reply_text(
-            f"💰 Ваш баланс (для платных услуг): {bal} токенов\n"
-            f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе",
-            reply_markup=get_main_keyboard()
+            "Опишите сценарий для видео (пока в разработке):",
+            reply_markup=get_cancel_keyboard()
         )
-        return CHOOSING_ACTION
-    elif text == "⭐ Пополнить звёзды":
-        # Пока заглушка
-        await update.message.reply_text(
-            "Функция пополнения звёздами временно недоступна.",
-            reply_markup=get_main_keyboard()
-        )
-        return CHOOSING_ACTION
-    elif text == "❌ Отмена":
-        return await cancel(update, context)
+        return VIDEO_GEN
+    elif text == "🧹 Сбросить диалог":
+        return await clear_dialog(update, context)
     else:
-        await update.message.reply_text(
-            "Пожалуйста, выберите пункт из меню.",
-            reply_markup=get_main_keyboard()
-        )
-        return CHOOSING_ACTION
+        # Если пользователь прислал текст вне меню, переходим в режим диалога
+        return await start_dialog(update, context, text)
 
-async def handle_text_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text == "❌ Отмена":
+async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
+    """Начинаем диалог с учётом истории"""
+    user_id = update.effective_user.id
+    if user_message is None:
+        user_message = update.message.text
+
+    # Сохраняем сообщение пользователя
+    save_message(user_id, "user", user_message)
+
+    # Получаем историю
+    history = get_history(user_id, limit=10)  # список кортежей (role, content)
+
+    # Генерируем ответ
+    try:
+        await update.message.reply_chat_action("typing")
+        answer = await masha_text_generate(user_message, history)
+        await update.message.reply_text(answer, reply_markup=get_cancel_keyboard())
+        # Сохраняем ответ ассистента
+        save_message(user_id, "assistant", answer)
+    except Exception as e:
+        logger.exception("Ошибка генерации текста")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при генерации. Попробуйте позже.",
+            reply_markup=get_cancel_keyboard()
+        )
+    return DIALOG
+
+async def handle_text_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка ввода для текстовой генерации"""
+    if update.message.text == "🔙 Главное меню":
+        return await cancel(update, context)
+    # Передаём в диалог
+    return await start_dialog(update, context, update.message.text)
+
+async def handle_image_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.text == "🔙 Главное меню":
         return await cancel(update, context)
 
     prompt = update.message.text
     user_id = update.effective_user.id
-
-    chat_id = update.effective_chat.id
-    typing_task = asyncio.create_task(send_typing_indicator(chat_id, context))
-
+    await update.message.reply_chat_action("upload_photo")
     try:
-        result = await generate_text(prompt)
-        typing_task.cancel()
-        if result:
-            if len(result) > 4000:
-                for i in range(0, len(result), 4000):
-                    await update.message.reply_text(result[i:i+4000])
-            else:
-                await update.message.reply_text(result)
-            save_generation(user_id, "gpt-5-nano", prompt)
-        else:
-            await update.message.reply_text("❌ Ошибка генерации текста. Попробуйте позже.")
-    except Exception as e:
-        typing_task.cancel()
-        logger.exception("Ошибка в handle_text_prompt")
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-    finally:
-        await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
-    return CHOOSING_ACTION
-
-async def handle_image_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text == "❌ Отмена":
-        return await cancel(update, context)
-
-    prompt = update.message.text
-    user_id = update.effective_user.id
-
-    used = get_weekly_image_count(user_id)
-    if used >= 5:
-        await update.message.reply_text(
-            "❌ Вы уже использовали все 5 бесплатных генераций изображений на этой неделе. Лимит обновится в понедельник.",
+        img_bytes = await masha_image_generate(prompt)
+        await update.message.reply_photo(
+            photo=io.BytesIO(img_bytes),
+            caption=f"🖼 Ваше изображение по запросу:\n{prompt}",
             reply_markup=get_main_keyboard()
         )
-        return CHOOSING_ACTION
-
-    chat_id = update.effective_chat.id
-    typing_task = asyncio.create_task(send_typing_indicator(chat_id, context))
-
-    try:
-        img_bytes = await generate_image(prompt)
-        typing_task.cancel()
-        await update.message.reply_photo(photo=io.BytesIO(img_bytes), caption="🖼️ Результат")
-        increment_weekly_image_count(user_id)
-        save_generation(user_id, "nano-banana-2", prompt)
+        # Сохраняем в историю (опционально)
+        save_message(user_id, "user", f"Создай изображение: {prompt}")
+        save_message(user_id, "assistant", "Изображение сгенерировано")
     except Exception as e:
-        typing_task.cancel()
         logger.exception("Ошибка генерации изображения")
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-    finally:
-        await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
-    return CHOOSING_ACTION
+        await update.message.reply_text(
+            "❌ Не удалось создать изображение. Попробуйте другой запрос.",
+            reply_markup=get_main_keyboard()
+        )
+    return MAIN_MENU
 
-# ------------------- Платежи (заглушка) -------------------
-async def buy_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Функция пополнения звёздами временно недоступна.")
+async def handle_video_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.text == "🔙 Главное меню":
+        return await cancel(update, context)
 
-async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=False, error_message="Платежи временно отключены")
+    prompt = update.message.text
+    await update.message.reply_chat_action("typing")
+    try:
+        result = await masha_video_generate(prompt)
+        await update.message.reply_text(
+            result,
+            reply_markup=get_main_keyboard()
+        )
+    except Exception as e:
+        logger.exception("Ошибка генерации видео")
+        await update.message.reply_text(
+            "❌ Функция видео временно недоступна.",
+            reply_markup=get_main_keyboard()
+        )
+    return MAIN_MENU
 
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Если пришло сообщение без состояния"""
+    return await start_dialog(update, context)
 
-# ------------------- Запуск -------------------
+# ------------------------------------------------------------------
+# Запуск
+# ------------------------------------------------------------------
 def main():
     if not TELEGRAM_TOKEN:
-        logger.error("TELEGRAM_TOKEN не задан!")
+        logger.error("TELEGRAM_TOKEN не задан")
         return
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[CommandHandler("start", start)],
         states={
-            CHOOSING_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
-            AWAITING_TEXT_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_prompt)],
-            AWAITING_IMAGE_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_prompt)],
+            MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
+            TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],
+            IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_gen)],
+            VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_gen)],
+            DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],  # продолжение диалога
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler('help', lambda u,c: u.message.reply_text("Используйте меню.")))
-    # Платежи временно отключены
-    # app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
-    # app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(CommandHandler("clear", clear_dialog))
+    app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    logger.info("Telegram-бот запущен (только текст и изображения)")
+    logger.info("Бот запущен")
     app.run_polling()
 
 if __name__ == "__main__":
