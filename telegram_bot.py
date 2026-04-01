@@ -1,7 +1,7 @@
 import asyncio
 import io
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -24,11 +24,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ------------------- Состояния -------------------
-MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, ANIMATE_GEN, DIALOG = range(9)
+MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG = range(8)
 
 # ------------------- Цены моделей (в промтах) -------------------
 MODEL_PRICES = {
-    # Текст (бесплатные по умолчанию, но для порядка укажем 0)
     "gpt-5-nano": 0,
     "gpt-5-mini": 0,
     "gpt-4o-mini": 0,
@@ -41,7 +40,6 @@ MODEL_PRICES = {
     "gemini-2.0-flash": 0,
     "gemini-2.0-flash-lite": 0,
     "gemini-2.5-flash-lite": 0,
-    # Все остальные чат-модели – платные (цены в промтах за 1M выходных токенов)
     "gpt-5.4": 15,
     "gpt-5.1": 10,
     "gpt-5": 10,
@@ -63,18 +61,18 @@ MODEL_PRICES = {
     "codeplugtech-face-swap": 10,
     "cdlingram-face-swap": 10,
     "recraft-crisp-upscale": 10,
-    "recraft-remove-background": 5,   # по датасету 5
+    "recraft-remove-background": 5,
     "topaz-image-upscale": 15,
     "flux-2": 15,
     "qwen-edit-multiangle": 15,
     "nano-banana-2": 5,
     "nano-banana-pro": 5,
     "midjourney": 30,
-    "gpt-image-1-5-text-to-image": 100,   # условно высокая цена
+    "gpt-image-1-5-text-to-image": 100,
     "gpt-image-1-5-image-to-image": 100,
     "ideogram-v3-reframe": 18,
     # Видео
-    "grok-imagine-text-to-video": 1,      # из датасета
+    "grok-imagine-text-to-video": 1,
     "wan-2-6-text-to-video": 3,
     "wan-2-5-text-to-video": 3,
     "wan-2-6-image-to-video": 3,
@@ -103,7 +101,7 @@ MODEL_PRICES = {
     "kling-v1-avatar-pro": 16,
     "kling-v1-avatar-standard": 8,
     "infinitalk-from-audio": 1.1,
-    "wan-2-2-animate-move": 0.75,   # 750K токенов = 0.75M
+    "wan-2-2-animate-move": 0.75,
     "wan-2-2-animate-replace": 0.75,
 }
 
@@ -136,21 +134,21 @@ def get_text_models_keyboard():
         ("gemini-2.0-flash", "Gemini 2.0 Flash", 0),
         ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
         ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0),
-        ("gpt-5.4", "GPT-5.4 (15 промтов)", 15),
-        ("gpt-5.1", "GPT-5.1 (10 промтов)", 10),
-        ("gpt-5", "GPT-5 (10 промтов)", 10),
-        ("gpt-4.1", "GPT-4.1 (8 промтов)", 8),
-        ("gpt-4o", "GPT-4o (10 промтов)", 10),
-        ("o3-mini", "O3-mini (4.4 промтов)", 4.4),
-        ("o3", "O3 (40 промтов)", 40),
-        ("o1", "O1 (60 промтов)", 60),
-        ("claude-haiku-4-5", "Claude Haiku 4.5 (5 промтов)", 5),
-        ("claude-sonnet-4-5", "Claude Sonnet 4.5 (15 промтов)", 15),
-        ("claude-opus-4-5", "Claude Opus 4.5 (25 промтов)", 25),
-        ("gemini-3-flash", "Gemini 3 Flash (3 промтов)", 3),
-        ("gemini-2.5-pro", "Gemini 2.5 Pro (10 промтов)", 10),
-        ("gemini-3-pro", "Gemini 3 Pro (16 промтов)", 16),
-        ("gemini-3-pro-image", "Gemini 3 Pro Image (12 промтов)", 12),
+        ("gpt-5.4", "GPT-5.4", 15),
+        ("gpt-5.1", "GPT-5.1", 10),
+        ("gpt-5", "GPT-5", 10),
+        ("gpt-4.1", "GPT-4.1", 8),
+        ("gpt-4o", "GPT-4o", 10),
+        ("o3-mini", "O3-mini", 4.4),
+        ("o3", "O3", 40),
+        ("o1", "O1", 60),
+        ("claude-haiku-4-5", "Claude Haiku 4.5", 5),
+        ("claude-sonnet-4-5", "Claude Sonnet 4.5", 15),
+        ("claude-opus-4-5", "Claude Opus 4.5", 25),
+        ("gemini-3-flash", "Gemini 3 Flash", 3),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
+        ("gemini-3-pro", "Gemini 3 Pro", 16),
+        ("gemini-3-pro-image", "Gemini 3 Pro Image", 12),
     ]
     # Сортируем по цене
     models.sort(key=lambda x: x[2])
@@ -290,7 +288,6 @@ async def send_long_message(update: Update, text: str):
         await update.message.reply_text(text[i:i+4096])
 
 async def create_task(model: str, payload: dict, retries=3):
-    """Создаёт задачу в MashaGPT (для изображений/видео/аудио/аватаров)"""
     url = f"{MASHA_BASE_URL}/tasks/{model}"
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     for attempt in range(retries):
@@ -367,7 +364,6 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
             return data["choices"][0]["message"]["content"]
 
 async def masha_media_generate(model: str, payload: dict) -> bytes:
-    """Универсальная генерация медиа (изображение, видео, аудио)"""
     task_id = await create_task(model, payload)
     if not task_id:
         raise Exception("Не удалось создать задачу")
@@ -385,7 +381,6 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
             return await resp.read()
 
 async def masha_media_get_url(model: str, payload: dict) -> str:
-    """Возвращает URL результата (для видео, которые не скачиваются)"""
     task_id = await create_task(model, payload)
     if not task_id:
         raise Exception("Не удалось создать задачу")
@@ -401,8 +396,6 @@ async def masha_media_get_url(model: str, payload: dict) -> str:
     return media_url
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
-    """Формирует payload для конкретной модели, используя документацию MashaGPT."""
-    # Словарь с параметрами для каждой модели (можно расширять)
     payloads = {
         # Изображения
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
@@ -514,36 +507,43 @@ async def buy_promts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "✏️ Генерация текста":
+        # Очищаем старые данные
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель текста:",
             reply_markup=get_text_models_keyboard()
         )
         return TEXT_GEN
     elif text == "🖼 Генерация изображения":
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель изображения (бесплатные – до 5 в неделю, платные – снимают промты):",
             reply_markup=get_image_models_keyboard()
         )
         return IMAGE_GEN
     elif text == "🎬 Генерация видео":
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель видео:",
             reply_markup=get_video_models_keyboard()
         )
         return VIDEO_GEN
     elif text == "✨ Обработка изображений":
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель обработки:",
             reply_markup=get_edit_models_keyboard()
         )
         return EDIT_GEN
     elif text == "🎵 Аудио (озвучка, эффекты)":
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель аудио:",
             reply_markup=get_audio_models_keyboard()
         )
         return AUDIO_GEN
     elif text == "🤖 Аватар / анимация":
+        context.user_data.clear()
         await update.message.reply_text(
             "Выберите модель аватара или анимации:",
             reply_markup=get_avatar_models_keyboard()
@@ -558,6 +558,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await buy_promts(update, context)
         return MAIN_MENU
     elif text == "🔙 Главное меню":
+        # Очищаем контекст при возврате в главное меню
+        context.user_data.clear()
         await update.message.reply_text(
             "Главное меню:",
             reply_markup=get_main_keyboard()
@@ -567,51 +569,10 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Если пользователь прислал текст вне меню, переходим в режим диалога с моделью по умолчанию
         return await start_dialog(update, context, text)
 
-async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
-    user_id = update.effective_user.id
-    if user_message is None:
-        user_message = update.message.text
-
-    save_message(user_id, "user", user_message)
-
-    history = get_history(user_id, limit=10)
-
-    # Используем модель по умолчанию (бесплатную)
-    model = "gpt-5-nano"
-    price = MODEL_PRICES.get(model, 0)
-
-    # Проверяем баланс только для платных моделей
-    if price > 0:
-        if get_user_balance(user_id) < price:
-            await update.message.reply_text(
-                f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}. Пополните баланс.",
-                reply_markup=get_main_keyboard()
-            )
-            return MAIN_MENU
-        if not deduct_balance(user_id, price):
-            await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
-            return MAIN_MENU
-
-    try:
-        await update.message.reply_chat_action("typing")
-        answer = await masha_text_generate(user_message, history, model)
-        await send_long_message(update, answer)
-        save_message(user_id, "assistant", answer)
-    except Exception as e:
-        logger.exception("Ошибка генерации текста")
-        await update.message.reply_text(
-            "❌ Произошла ошибка при генерации. Попробуйте позже.",
-            reply_markup=get_main_keyboard()
-        )
-        # Если списали, но произошла ошибка – возвращаем
-        if price > 0:
-            add_balance(user_id, price)
-    return MAIN_MENU
-
-# ------------------- Универсальный обработчик выбора модели -------------------
-async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, keyboard_func) -> int:
+async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str) -> int:
     text = update.message.text
     if text == "🔙 Главное меню":
+        context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
@@ -722,64 +683,42 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         if text == btn_text:
             context.user_data['selected_model'] = model_id
             context.user_data['model_price'] = price
-            context.user_data['model_category'] = category
+            context.user_data['selected_category'] = category
 
-            # Если модель требует изображения (для обработки, аватаров, face-swap, qwen, etc.)
-            if model_id in ["codeplugtech-face-swap", "cdlingram-face-swap"]:
-                # Два изображения: target и swap
-                context.user_data['temp'] = {}
+            # Если модель требует изображения (для обработки, аватаров, face-swap, qwen, etc.) – заглушки
+            if model_id in ["codeplugtech-face-swap", "cdlingram-face-swap", "qwen-edit-multiangle",
+                            "kling-v1-avatar-pro", "kling-v1-avatar-standard", "infinitalk-from-audio",
+                            "wan-2-2-animate-move", "wan-2-2-animate-replace"]:
                 await update.message.reply_text(
-                    "Отправьте целевое изображение (на которое будет перенесено лицо):",
-                    reply_markup=get_cancel_keyboard()
+                    f"Извините, модель {label} требует пошагового ввода данных (фото, аудио) – эта функция временно в разработке.",
+                    reply_markup=get_main_keyboard()
                 )
-                # Здесь нужно сохранить состояние для ожидания двух фото – в этой версии для простоты опустим
-                # В реальном боте нужно реализовать цепочку из двух состояний.
-                # Для краткости временно сообщаем, что функция в разработке.
-                await update.message.reply_text("Извините, функция замены лица в разработке. Пока доступны только простые запросы.")
                 return MAIN_MENU
-            elif model_id in ["qwen-edit-multiangle"]:
-                context.user_data['temp'] = {}
-                await update.message.reply_text(
-                    "Отправьте исходное изображение объекта:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                await update.message.reply_text("Функция мультиракурса в разработке.")
-                return MAIN_MENU
-            elif model_id in ["kling-v1-avatar-pro", "kling-v1-avatar-standard", "infinitalk-from-audio"]:
-                await update.message.reply_text(
-                    "Отправьте фото лица, затем аудиофайл (текст).",
-                    reply_markup=get_cancel_keyboard()
-                )
-                await update.message.reply_text("Функция аватара в разработке.")
-                return MAIN_MENU
-            elif model_id in ["wan-2-2-animate-move", "wan-2-2-animate-replace"]:
-                await update.message.reply_text(
-                    "Отправьте видео с движением, затем изображение персонажа.",
-                    reply_markup=get_cancel_keyboard()
-                )
-                await update.message.reply_text("Функция анимации в разработке.")
-                return MAIN_MENU
-            elif model_id in ["recraft-crisp-upscale", "recraft-remove-background", "topaz-image-upscale"]:
-                await update.message.reply_text(
-                    "Отправьте изображение, которое нужно обработать:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                context.user_data['awaiting_image'] = True
-                return EDIT_GEN  # временно
-            else:
-                # Обычный текстовый/медийный запрос
+
+            # Для текстовых моделей переходим в режим диалога
+            if category == "text":
                 await update.message.reply_text(
                     f"Выбрана модель: {label}\n\nВведите запрос:",
                     reply_markup=get_cancel_keyboard()
                 )
-                if category == "text":
-                    return TEXT_GEN
-                elif category == "image":
+                return DIALOG
+            # Для остальных категорий (изображения, видео, аудио, обработка) – ждём текст
+            else:
+                await update.message.reply_text(
+                    f"Выбрана модель: {label}\n\nВведите запрос:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                # Возвращаем соответствующее состояние
+                if category == "image":
                     return IMAGE_GEN
                 elif category == "video":
                     return VIDEO_GEN
+                elif category == "edit":
+                    return EDIT_GEN
                 elif category == "audio":
                     return AUDIO_GEN
+                elif category == "avatar":
+                    return AVATAR_GEN
                 else:
                     return MAIN_MENU
 
@@ -787,36 +726,81 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("Пожалуйста, выберите модель из списка.")
     return MAIN_MENU
 
-# ------------------- Обработчики для конкретных категорий -------------------
+# Обработчики для выбора категории
 async def handle_text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "text", get_text_models_keyboard)
+    return await handle_model_selection(update, context, "text")
 
 async def handle_image_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "image", get_image_models_keyboard)
+    return await handle_model_selection(update, context, "image")
 
 async def handle_video_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "video", get_video_models_keyboard)
+    return await handle_model_selection(update, context, "video")
 
 async def handle_edit_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "edit", get_edit_models_keyboard)
+    return await handle_model_selection(update, context, "edit")
 
 async def handle_audio_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "audio", get_audio_models_keyboard)
+    return await handle_model_selection(update, context, "audio")
 
 async def handle_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_model_selection(update, context, "avatar", get_avatar_models_keyboard)
+    return await handle_model_selection(update, context, "avatar")
 
-# ------------------- Универсальный обработчик ввода для медиа -------------------
+# Универсальный обработчик для ввода текста (диалог)
+async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
+    user_id = update.effective_user.id
+    if user_message is None:
+        user_message = update.message.text
+
+    # Получаем модель из контекста или используем дефолтную
+    model = context.user_data.get('selected_model', 'gpt-5-nano')
+    price = MODEL_PRICES.get(model, 0)
+
+    # Сохраняем сообщение пользователя
+    save_message(user_id, "user", user_message)
+    history = get_history(user_id, limit=10)
+
+    # Проверка баланса для платных моделей
+    if price > 0:
+        if get_user_balance(user_id) < price:
+            await update.message.reply_text(
+                f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}. Пополните баланс.",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+        if not deduct_balance(user_id, price):
+            await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+
+    try:
+        await update.message.reply_chat_action("typing")
+        answer = await masha_text_generate(user_message, history, model)
+        await send_long_message(update, answer)
+        save_message(user_id, "assistant", answer)
+    except Exception as e:
+        logger.exception("Ошибка генерации текста")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при генерации. Попробуйте позже.",
+            reply_markup=get_main_keyboard()
+        )
+        if price > 0:
+            add_balance(user_id, price)
+    return DIALOG  # остаёмся в диалоге, чтобы можно было продолжать
+
+# Обработчики для медиа-генерации (упрощённые)
 async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str) -> int:
     user_id = update.effective_user.id
     model = context.user_data.get('selected_model')
     price = context.user_data.get('model_price', 0)
     text = update.message.text
     if text == "🔙 Главное меню":
+        context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Для изображений, видео, аудио – используем create_task
+    if not model:
+        await update.message.reply_text("Сначала выберите модель в меню.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
     payload = build_payload(model, prompt=text)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для этой модели.")
@@ -834,7 +818,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
-    # Для бесплатных изображений – проверяем лимит (только для категории image и price==0)
+    # Для бесплатных изображений – проверяем лимит
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -842,26 +826,18 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 "❌ Вы уже использовали все 5 бесплатных генераций изображений на этой неделе. Лимит обновится в понедельник.",
                 reply_markup=get_main_keyboard()
             )
-            if price > 0:
-                add_balance(user_id, price)
             return MAIN_MENU
 
     try:
-        await update.message.reply_chat_action("upload_photo" if "image" in category else "typing")
-        # Для видео и аудио – скачиваем результат и отправляем файлом
-        if category == "video" or category == "audio" or category == "edit":
-            result_bytes = await masha_media_generate(model, payload)
-            if "video" in model or category == "video":
-                await update.message.reply_video(video=io.BytesIO(result_bytes), caption=f"🎬 Результат")
-            elif "audio" in model or category == "audio":
-                await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
-            else:
-                await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+        await update.message.reply_chat_action("upload_photo" if category != "audio" else "record_audio")
+        result_bytes = await masha_media_generate(model, payload)
+        if category == "video":
+            await update.message.reply_video(video=io.BytesIO(result_bytes), caption=f"🎬 Результат")
+        elif category == "audio":
+            await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
         else:
-            result_bytes = await masha_media_generate(model, payload)
             await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
 
-        # Увеличиваем счётчик только для бесплатных изображений
         if category == "image" and price == 0:
             increment_weekly_image_count(user_id)
         save_message(user_id, "user", f"{category} запрос: {text}")
