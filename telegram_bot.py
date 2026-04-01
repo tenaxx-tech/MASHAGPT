@@ -367,7 +367,21 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
                 logger.error(f"Masha API error {resp.status}: {error_text}")
                 raise Exception(f"Masha error: {resp.status}")
             data = await resp.json()
-            return data["choices"][0]["message"]["content"]
+            # Логируем полный ответ (первые 500 символов)
+            logger.info(f"Полный JSON ответ: {json.dumps(data, ensure_ascii=False)[:500]}")
+
+            # Пытаемся извлечь content
+            content = None
+            if "choices" in data and len(data["choices"]) > 0:
+                message = data["choices"][0].get("message", {})
+                content = message.get("content")
+            if not content:
+                # Альтернативные поля (например, result, output)
+                content = data.get("result") or data.get("output")
+            if not content:
+                logger.warning("Не удалось извлечь content из ответа")
+                return ""
+            return content
 
 async def masha_media_generate(model: str, payload: dict) -> bytes:
     task_id = await create_task(model, payload)
