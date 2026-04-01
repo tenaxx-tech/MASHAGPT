@@ -10,32 +10,6 @@ if not TELEGRAM_TOKEN:
     sys.exit(1)
 
 # ------------------------------------------------------------------
-# Felo AI
-# ------------------------------------------------------------------
-FELO_API_KEY = os.getenv("FELO_API_KEY")
-if not FELO_API_KEY:
-    print("❌ Ошибка: FELO_API_KEY не задан")
-    sys.exit(1)
-
-FELO_API_URL = os.getenv("FELO_API_URL", "https://openapi.felo.ai/v2/chat")
-
-# ------------------------------------------------------------------
-# Replicate
-# ------------------------------------------------------------------
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-if not REPLICATE_API_TOKEN:
-    print("❌ Ошибка: REPLICATE_API_TOKEN не задан")
-    sys.exit(1)
-
-# ------------------------------------------------------------------
-# OpenAI (Sora 2)
-# ------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    print("❌ Ошибка: OPENAI_API_KEY не задан")
-    sys.exit(1)
-
-# ------------------------------------------------------------------
 # MASHA (предполагаемая интеграция)
 # ------------------------------------------------------------------
 MASHA_API_KEY = os.getenv("MASHA_API_KEY")
@@ -73,9 +47,3 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 if not DEEPSEEK_API_KEY:
     print("❌ Ошибка: DEEPSEEK_API_KEY не задан")
     sys.exit(1)
-
-# ------------------------------------------------------------------
-# Общие настройки
-# ------------------------------------------------------------------
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-PORT = int(os.getenv("PORT", 8080))   # Railway подставляет PORT
