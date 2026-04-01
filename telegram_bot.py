@@ -13,7 +13,10 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 
-from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
+from config import (
+    TELEGRAM_TOKEN, DEEPSEEK_API_KEY,
+    MASHA_API_KEY, MASHA_BASE_URL
+)
 from database import (
     init_db, save_message, get_history, clear_history, update_user_activity
 )
@@ -48,26 +51,26 @@ def get_cancel_keyboard():
     )
 
 # ------------------------------------------------------------------
-# Вспомогательные функции для работы с Masha API
+# Функции для работы с DeepSeek (текст)
 # ------------------------------------------------------------------
-async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
+async def deepseek_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
     """
-    Вызов Masha API для генерации текста с учётом истории.
-    history: список кортежей (role, content)
+    Вызов DeepSeek API с учётом истории.
+    history: список кортежей (role, content) – user/assistant.
     """
     messages = []
-    # Добавляем историю (до 5 последних сообщений, чтобы не перегружать контекст)
+    # Добавляем историю (последние 5 сообщений)
     for role, content in history[-5:]:
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    url = f"{MASHA_BASE_URL}/chat/completions"
+    url = "https://api.deepseek.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": MASHA_API_KEY
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
     }
     payload = {
-        "model": "gpt-5-nano",   # бесплатная модель
+        "model": "deepseek-chat",
         "messages": messages,
         "max_tokens": 1024,
         "temperature": 0.7
@@ -77,16 +80,19 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> st
         async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
-                logger.error(f"Masha API error {resp.status}: {error_text}")
-                raise Exception(f"API error: {resp.status}")
+                logger.error(f"DeepSeek API error {resp.status}: {error_text}")
+                raise Exception(f"DeepSeek error: {resp.status}")
             data = await resp.json()
             return data["choices"][0]["message"]["content"]
 
+# ------------------------------------------------------------------
+# Функции для Masha (изображения, видео – остаются как заглушки)
+# ------------------------------------------------------------------
 async def masha_image_generate(prompt: str) -> bytes:
-    """Генерация изображения через Nano Banana"""
-    # Предполагается, что у Masha есть эндпоинт для генерации изображений
-    # Формат может отличаться, уточните в документации.
-    # Ниже пример, адаптируйте под реальный API.
+    """Генерация изображения через Masha Nano Banana"""
+    # Если ключ Masha не задан, возвращаем ошибку
+    if not MASHA_API_KEY:
+        raise Exception("MASHA_API_KEY не задан. Генерация изображений недоступна.")
     url = f"{MASHA_BASE_URL}/images/generations"
     headers = {
         "Content-Type": "application/json",
@@ -106,32 +112,28 @@ async def masha_image_generate(prompt: str) -> bytes:
                 logger.error(f"Image API error {resp.status}: {error_text}")
                 raise Exception(f"Image API error: {resp.status}")
             data = await resp.json()
-            # Допустим, API возвращает URL изображения
             image_url = data.get("data", [{}])[0].get("url")
             if not image_url:
                 raise Exception("No image URL in response")
-            # Скачиваем изображение
             async with session.get(image_url) as img_resp:
                 return await img_resp.read()
 
 async def masha_video_generate(prompt: str) -> str:
-    """Заглушка для видео (Sora пока недоступна бесплатно)"""
-    # Возвращаем сообщение-заглушку
+    """Заглушка для видео"""
     return "🎬 Генерация видео временно недоступна. Функция в разработке."
 
 # ------------------------------------------------------------------
 # Обработчики
 # ------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Команда /start – инициализация"""
     init_db()
     user_id = update.effective_user.id
     update_user_activity(user_id)
     await update.message.reply_text(
         "🤖 *Привет! Я бот с поддержкой ИИ.*\n\n"
         "Я умею:\n"
-        "✏️ генерировать текст\n"
-        "🖼 создавать изображения\n"
+        "✏️ генерировать текст (DeepSeek)\n"
+        "🖼 создавать изображения (Nano Banana)\n"
         "🎬 генерировать видео (в разработке)\n\n"
         "*Я помню контекст диалога!* Просто отправляйте сообщения, и я буду отвечать, учитывая историю.\n"
         "Чтобы сменить режим или сбросить историю, используйте кнопки внизу.\n\n"
@@ -142,7 +144,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Возврат в главное меню"""
     await update.message.reply_text(
         "🔙 Возвращаемся в главное меню.",
         reply_markup=get_main_keyboard()
@@ -150,7 +151,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return MAIN_MENU
 
 async def clear_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Сброс истории диалога"""
     user_id = update.effective_user.id
     clear_history(user_id)
     await update.message.reply_text(
@@ -186,23 +186,18 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return await start_dialog(update, context, text)
 
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
-    """Начинаем диалог с учётом истории"""
     user_id = update.effective_user.id
     if user_message is None:
         user_message = update.message.text
 
-    # Сохраняем сообщение пользователя
     save_message(user_id, "user", user_message)
 
-    # Получаем историю
-    history = get_history(user_id, limit=10)  # список кортежей (role, content)
+    history = get_history(user_id, limit=10)
 
-    # Генерируем ответ
     try:
         await update.message.reply_chat_action("typing")
-        answer = await masha_text_generate(user_message, history)
+        answer = await deepseek_generate(user_message, history)
         await update.message.reply_text(answer, reply_markup=get_cancel_keyboard())
-        # Сохраняем ответ ассистента
         save_message(user_id, "assistant", answer)
     except Exception as e:
         logger.exception("Ошибка генерации текста")
@@ -213,10 +208,8 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     return DIALOG
 
 async def handle_text_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка ввода для текстовой генерации"""
     if update.message.text == "🔙 Главное меню":
         return await cancel(update, context)
-    # Передаём в диалог
     return await start_dialog(update, context, update.message.text)
 
 async def handle_image_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -233,7 +226,6 @@ async def handle_image_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             caption=f"🖼 Ваше изображение по запросу:\n{prompt}",
             reply_markup=get_main_keyboard()
         )
-        # Сохраняем в историю (опционально)
         save_message(user_id, "user", f"Создай изображение: {prompt}")
         save_message(user_id, "assistant", "Изображение сгенерировано")
     except Exception as e:
@@ -265,7 +257,6 @@ async def handle_video_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return MAIN_MENU
 
 async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Если пришло сообщение без состояния"""
     return await start_dialog(update, context)
 
 # ------------------------------------------------------------------
@@ -274,6 +265,9 @@ async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main():
     if not TELEGRAM_TOKEN:
         logger.error("TELEGRAM_TOKEN не задан")
+        return
+    if not DEEPSEEK_API_KEY:
+        logger.error("DEEPSEEK_API_KEY не задан")
         return
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -285,7 +279,7 @@ def main():
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],
             IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_gen)],
             VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_gen)],
-            DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],  # продолжение диалога
+            DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -294,7 +288,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_dialog))
     app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    logger.info("Бот запущен")
+    logger.info("Бот запущен (текст: DeepSeek, изображения: Masha)")
     app.run_polling()
 
 if __name__ == "__main__":
