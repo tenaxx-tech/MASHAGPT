@@ -1,7 +1,7 @@
 import asyncio
 import io
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -10,9 +10,11 @@ from telegram.ext import (
     ContextTypes, ConversationHandler
 )
 
-from config import TELEGRAM_TOKEN, MASHA_API_KEY
+from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
 from database import (
-    init_db, save_message, get_history, clear_history, update_user_activity
+    init_db, save_message, get_history, clear_history, update_user_activity,
+    get_user_balance, add_balance, deduct_balance,
+    get_weekly_image_count, increment_weekly_image_count
 )
 
 logging.basicConfig(
@@ -21,10 +23,89 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ------------------- Константы -------------------
-MASHA_BASE_URL = "https://api.mashagpt.ru/v1"  # фиксированный правильный URL
+# ------------------- Состояния -------------------
+MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, ANIMATE_GEN, DIALOG = range(9)
 
-MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, DIALOG = range(5)
+# ------------------- Цены моделей (в промтах) -------------------
+MODEL_PRICES = {
+    # Текст (бесплатные по умолчанию, но для порядка укажем 0)
+    "gpt-5-nano": 0,
+    "gpt-5-mini": 0,
+    "gpt-4o-mini": 0,
+    "gpt-4.1-nano": 0,
+    "deepseek-chat": 0,
+    "deepseek-reasoner": 0,
+    "grok-4-1-fast-reasoning": 0,
+    "grok-4-1-fast-non-reasoning": 0,
+    "grok-3-mini": 0,
+    "gemini-2.0-flash": 0,
+    "gemini-2.0-flash-lite": 0,
+    "gemini-2.5-flash-lite": 0,
+    # Все остальные чат-модели – платные (цены в промтах за 1M выходных токенов)
+    "gpt-5.4": 15,
+    "gpt-5.1": 10,
+    "gpt-5": 10,
+    "gpt-4.1": 8,
+    "gpt-4o": 10,
+    "o3-mini": 4.4,
+    "o3": 40,
+    "o1": 60,
+    "claude-haiku-4-5": 5,
+    "claude-sonnet-4-5": 15,
+    "claude-opus-4-5": 25,
+    "gemini-3-flash": 3,
+    "gemini-2.5-pro": 10,
+    "gemini-3-pro": 16,
+    "gemini-3-pro-image": 12,
+    # Изображения
+    "z-image": 6,
+    "grok-imagine-text-to-image": 8,
+    "codeplugtech-face-swap": 10,
+    "cdlingram-face-swap": 10,
+    "recraft-crisp-upscale": 10,
+    "recraft-remove-background": 5,   # по датасету 5
+    "topaz-image-upscale": 15,
+    "flux-2": 15,
+    "qwen-edit-multiangle": 15,
+    "nano-banana-2": 5,
+    "nano-banana-pro": 5,
+    "midjourney": 30,
+    "gpt-image-1-5-text-to-image": 100,   # условно высокая цена
+    "gpt-image-1-5-image-to-image": 100,
+    "ideogram-v3-reframe": 18,
+    # Видео
+    "grok-imagine-text-to-video": 1,      # из датасета
+    "wan-2-6-text-to-video": 3,
+    "wan-2-5-text-to-video": 3,
+    "wan-2-6-image-to-video": 3,
+    "wan-2-6-video-to-video": 3,
+    "wan-2-5-image-to-video": 3,
+    "sora-2-text-to-video": 3,
+    "sora-2-image-to-video": 3,
+    "veo-3-1": 5,
+    "kling-2-6-text-to-video": 6,
+    "kling-v2-5-turbo-pro": 6,
+    "kling-2-6-image-to-video": 6,
+    "kling-v2-5-turbo-image-to-video-pro": 5,
+    "sora-2-pro-text-to-video": 5,
+    "sora-2-pro-image-to-video": 5,
+    "sora-2-pro-storyboard": 7,
+    "hailuo-2-3": 4,
+    "minimax-video-01-director": 4,
+    "seedance-v1-pro-fast": 30,
+    "kling-2-6-motion-control": 6,
+    # Аудио
+    "elevenlabs-tts-multilingual-v2": 0,
+    "elevenlabs-tts-turbo-2-5": 0,
+    "elevenlabs-text-to-dialogue-v3": 0,
+    "elevenlabs-sound-effect-v2": 5,
+    # Аватар и анимация
+    "kling-v1-avatar-pro": 16,
+    "kling-v1-avatar-standard": 8,
+    "infinitalk-from-audio": 1.1,
+    "wan-2-2-animate-move": 0.75,   # 750K токенов = 0.75M
+    "wan-2-2-animate-replace": 0.75,
+}
 
 # ------------------- Клавиатуры -------------------
 def get_main_keyboard():
@@ -32,9 +113,167 @@ def get_main_keyboard():
         [KeyboardButton("✏️ Генерация текста")],
         [KeyboardButton("🖼 Генерация изображения")],
         [KeyboardButton("🎬 Генерация видео")],
+        [KeyboardButton("✨ Обработка изображений")],
+        [KeyboardButton("🎵 Аудио (озвучка, эффекты)")],
+        [KeyboardButton("🤖 Аватар / анимация")],
         [KeyboardButton("🧹 Сбросить диалог")],
+        [KeyboardButton("💰 Мой баланс")],
+        [KeyboardButton("⭐ Пополнить промты")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+
+def get_text_models_keyboard():
+    models = [
+        ("gpt-5-nano", "GPT-5 nano", 0),
+        ("gpt-5-mini", "GPT-5 mini", 0),
+        ("gpt-4o-mini", "GPT-4o mini", 0),
+        ("gpt-4.1-nano", "GPT-4.1 nano", 0),
+        ("deepseek-chat", "DeepSeek Chat", 0),
+        ("deepseek-reasoner", "DeepSeek Reasoner", 0),
+        ("grok-4-1-fast-reasoning", "Grok 4.1 Fast (reasoning)", 0),
+        ("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast", 0),
+        ("grok-3-mini", "Grok 3 mini", 0),
+        ("gemini-2.0-flash", "Gemini 2.0 Flash", 0),
+        ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
+        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0),
+        ("gpt-5.4", "GPT-5.4 (15 промтов)", 15),
+        ("gpt-5.1", "GPT-5.1 (10 промтов)", 10),
+        ("gpt-5", "GPT-5 (10 промтов)", 10),
+        ("gpt-4.1", "GPT-4.1 (8 промтов)", 8),
+        ("gpt-4o", "GPT-4o (10 промтов)", 10),
+        ("o3-mini", "O3-mini (4.4 промтов)", 4.4),
+        ("o3", "O3 (40 промтов)", 40),
+        ("o1", "O1 (60 промтов)", 60),
+        ("claude-haiku-4-5", "Claude Haiku 4.5 (5 промтов)", 5),
+        ("claude-sonnet-4-5", "Claude Sonnet 4.5 (15 промтов)", 15),
+        ("claude-opus-4-5", "Claude Opus 4.5 (25 промтов)", 25),
+        ("gemini-3-flash", "Gemini 3 Flash (3 промтов)", 3),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro (10 промтов)", 10),
+        ("gemini-3-pro", "Gemini 3 Pro (16 промтов)", 16),
+        ("gemini-3-pro-image", "Gemini 3 Pro Image (12 промтов)", 12),
+    ]
+    # Сортируем по цене
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        if price == 0:
+            btn_text = f"{label} (бесплатно)"
+        else:
+            btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_image_models_keyboard():
+    models = [
+        ("z-image", "Z-Image", 6),
+        ("grok-imagine-text-to-image", "Grok Imagine", 8),
+        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
+        ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
+        ("recraft-crisp-upscale", "Recraft Crisp Upscale", 10),
+        ("recraft-remove-background", "Recraft Remove Background", 5),
+        ("topaz-image-upscale", "Topaz Image Upscale", 15),
+        ("flux-2", "Flux 2", 15),
+        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 15),
+        ("nano-banana-2", "Nano Banana 2", 5),
+        ("nano-banana-pro", "Nano Banana Pro", 5),
+        ("midjourney", "Midjourney", 30),
+        ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 100),
+        ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 100),
+        ("ideogram-v3-reframe", "Ideogram V3 Reframe", 18),
+    ]
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        if price == 0:
+            btn_text = f"{label} (бесплатно)"
+        else:
+            btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_video_models_keyboard():
+    models = [
+        ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
+        ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
+        ("wan-2-5-text-to-video", "Wan 2.5 (txt2vid)", 3),
+        ("wan-2-6-image-to-video", "Wan 2.6 (img2vid)", 3),
+        ("wan-2-6-video-to-video", "Wan 2.6 (vid2vid)", 3),
+        ("wan-2-5-image-to-video", "Wan 2.5 (img2vid)", 3),
+        ("sora-2-text-to-video", "Sora 2 (txt2vid)", 3),
+        ("sora-2-image-to-video", "Sora 2 (img2vid)", 3),
+        ("veo-3-1", "Google Veo 3.1", 5),
+        ("kling-2-6-text-to-video", "Kling 2.6 (txt2vid)", 6),
+        ("kling-v2-5-turbo-pro", "Kling V2.5 Turbo Pro", 6),
+        ("kling-2-6-image-to-video", "Kling 2.6 (img2vid)", 6),
+        ("kling-v2-5-turbo-image-to-video-pro", "Kling V2.5 Turbo I2V Pro", 5),
+        ("sora-2-pro-text-to-video", "Sora 2 Pro (txt2vid)", 5),
+        ("sora-2-pro-image-to-video", "Sora 2 Pro (img2vid)", 5),
+        ("sora-2-pro-storyboard", "Sora 2 Pro Storyboard", 7),
+        ("hailuo-2-3", "Hailuo 2.3", 4),
+        ("minimax-video-01-director", "Minimax Video-01 Director", 4),
+        ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
+        ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6),
+    ]
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_edit_models_keyboard():
+    models = [
+        ("recraft-crisp-upscale", "Recraft Crisp Upscale", 10),
+        ("recraft-remove-background", "Recraft Remove Background", 5),
+        ("topaz-image-upscale", "Topaz Image Upscale", 15),
+        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
+        ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
+        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 15),
+    ]
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_audio_models_keyboard():
+    models = [
+        ("elevenlabs-tts-multilingual-v2", "Озвучка (Multilingual)", 0),
+        ("elevenlabs-tts-turbo-2-5", "Быстрая озвучка (Turbo)", 0),
+        ("elevenlabs-text-to-dialogue-v3", "Диалоги (Dialogue V3)", 0),
+        ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5),
+    ]
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        if price == 0:
+            btn_text = f"{label} (бесплатно)"
+        else:
+            btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_avatar_models_keyboard():
+    models = [
+        ("kling-v1-avatar-standard", "Kling Avatar Standard", 8),
+        ("kling-v1-avatar-pro", "Kling Avatar Pro", 16),
+        ("infinitalk-from-audio", "Infinitalk (говорящая голова)", 1.1),
+        ("wan-2-2-animate-move", "Wan Animate Move", 0.75),
+        ("wan-2-2-animate-replace", "Wan Animate Replace", 0.75),
+    ]
+    models.sort(key=lambda x: x[2])
+    keyboard = []
+    for model_id, label, price in models:
+        btn_text = f"{label} ({price} промтов)"
+        keyboard.append([KeyboardButton(btn_text)])
+    keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 def get_cancel_keyboard():
     return ReplyKeyboardMarkup(
@@ -45,14 +284,13 @@ def get_cancel_keyboard():
 
 # ------------------- Вспомогательные функции -------------------
 async def send_long_message(update: Update, text: str):
-    """Разбивает длинный текст на части и отправляет"""
     if not text:
         return
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
 
 async def create_task(model: str, payload: dict, retries=3):
-    """Создаёт задачу в MashaGPT (для изображений/видео)"""
+    """Создаёт задачу в MashaGPT (для изображений/видео/аудио/аватаров)"""
     url = f"{MASHA_BASE_URL}/tasks/{model}"
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     for attempt in range(retries):
@@ -104,20 +342,16 @@ async def wait_for_task(task_id: str, timeout=180):
             return None
 
 # ------------------- Masha API вызовы -------------------
-async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
-    """Генерация текста через Masha (модель gpt-5-nano)"""
+async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
     messages = []
     for role, content in history[-5:]:
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
     url = f"{MASHA_BASE_URL}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": MASHA_API_KEY
-    }
+    headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     payload = {
-        "model": "gpt-5-nano",
+        "model": model,
         "messages": messages,
         "max_tokens": 1024,
         "temperature": 0.7
@@ -132,10 +366,8 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> st
             data = await resp.json()
             return data["choices"][0]["message"]["content"]
 
-async def masha_image_generate(prompt: str) -> bytes:
-    """Генерация изображения через Masha (nano-banana-2)"""
-    model = "nano-banana-2"
-    payload = {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"}
+async def masha_media_generate(model: str, payload: dict) -> bytes:
+    """Универсальная генерация медиа (изображение, видео, аудио)"""
     task_id = await create_task(model, payload)
     if not task_id:
         raise Exception("Не удалось создать задачу")
@@ -149,13 +381,11 @@ async def masha_image_generate(prompt: str) -> bytes:
     if not media_url:
         raise Exception("Нет URL в ответе")
     async with aiohttp.ClientSession() as session:
-        async with session.get(media_url) as img_resp:
-            return await img_resp.read()
+        async with session.get(media_url) as resp:
+            return await resp.read()
 
-async def masha_video_generate(prompt: str) -> str:
-    """Генерация видео через Masha (kling-2-6-text-to-video)"""
-    model = "kling-2-6-text-to-video"
-    payload = {"prompt": prompt, "aspectRatio": "16:9", "duration": "5", "sound": False}
+async def masha_media_get_url(model: str, payload: dict) -> str:
+    """Возвращает URL результата (для видео, которые не скачиваются)"""
     task_id = await create_task(model, payload)
     if not task_id:
         raise Exception("Не удалось создать задачу")
@@ -170,6 +400,62 @@ async def masha_video_generate(prompt: str) -> str:
         raise Exception("Нет URL в ответе")
     return media_url
 
+def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
+    """Формирует payload для конкретной модели, используя документацию MashaGPT."""
+    # Словарь с параметрами для каждой модели (можно расширять)
+    payloads = {
+        # Изображения
+        "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
+        "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
+        "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
+        "grok-imagine-text-to-image": {"prompt": prompt, "aspectRatio": "1:1"},
+        "flux-2": {"prompt": prompt, "model": "pro", "aspectRatio": "1:1", "resolution": "1K"},
+        "midjourney": {"taskType": "mj_txt2img", "prompt": prompt, "aspectRatio": "1:1", "speed": "fast"},
+        "gpt-image-1-5-text-to-image": {"prompt": prompt, "aspectRatio": "1:1", "quality": "medium"},
+        "ideogram-v3-reframe": {"imageUrl": image_url, "imageSize": "square", "renderingSpeed": "BALANCED"} if image_url else None,
+        "recraft-crisp-upscale": {"imageUrl": image_url} if image_url else None,
+        "recraft-remove-background": {"imageUrl": image_url} if image_url else None,
+        "topaz-image-upscale": {"imageUrl": image_url, "upscaleFactor": "2"} if image_url else None,
+        "codeplugtech-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
+                                   "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
+        "cdlingram-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
+                                "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
+        "qwen-edit-multiangle": {"prompt": prompt, "image": image_url},
+        # Видео
+        "grok-imagine-text-to-video": {"prompt": prompt, "aspectRatio": "3:2", "mode": "normal"},
+        "wan-2-6-text-to-video": {"prompt": prompt, "duration": "5", "resolution": "1080p"},
+        "wan-2-5-text-to-video": {"prompt": prompt, "duration": "5", "aspectRatio": "16:9", "resolution": "1080p"},
+        "wan-2-6-image-to-video": {"prompt": prompt, "imageUrls": [image_url]} if image_url else None,
+        "wan-2-6-video-to-video": {"prompt": prompt, "videoUrls": [image_url]} if image_url else None,
+        "wan-2-5-image-to-video": {"prompt": prompt, "imageUrl": image_url} if image_url else None,
+        "sora-2-text-to-video": {"prompt": prompt, "aspectRatio": "landscape", "duration": "10", "removeWatermark": True},
+        "sora-2-image-to-video": {"prompt": prompt, "imageUrls": [image_url]} if image_url else None,
+        "veo-3-1": {"prompt": prompt, "model": "veo3_fast", "aspectRatio": "16:9"},
+        "kling-2-6-text-to-video": {"prompt": prompt, "aspectRatio": "16:9", "duration": "5", "sound": False},
+        "kling-v2-5-turbo-pro": {"prompt": prompt, "aspectRatio": "16:9", "duration": "5", "cfgScale": 0.5},
+        "kling-2-6-image-to-video": {"prompt": prompt, "imageUrl": image_url, "duration": "5", "sound": False} if image_url else None,
+        "kling-v2-5-turbo-image-to-video-pro": {"prompt": prompt, "imageUrl": image_url, "duration": "5", "cfgScale": 0.5} if image_url else None,
+        "sora-2-pro-text-to-video": {"prompt": prompt, "aspectRatio": "landscape", "duration": "10", "size": "high"},
+        "sora-2-pro-image-to-video": {"prompt": prompt, "imageUrls": [image_url], "duration": "10", "resolution": "1080p"} if image_url else None,
+        "sora-2-pro-storyboard": {"duration": "15", "shots": [{"scene": prompt, "duration": 5}]},
+        "hailuo-2-3": {"prompt": prompt, "duration": "6", "resolution": "768P", "variant": "standard"},
+        "minimax-video-01-director": {"prompt": prompt, "promptOptimizer": True},
+        "seedance-v1-pro-fast": {"prompt": prompt, "imageUrl": image_url, "resolution": "720p", "duration": "5"} if image_url else None,
+        "kling-2-6-motion-control": {"prompt": prompt, "imageUrls": [image_url] if image_url else None, "characterOrientation": "image", "duration": 5},
+        # Аудио
+        "elevenlabs-tts-multilingual-v2": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
+        "elevenlabs-tts-turbo-2-5": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
+        "elevenlabs-text-to-dialogue-v3": {"dialogue": [{"text": prompt, "voice": "Rachel"}], "stability": 0.5, "languageCode": "ru"},
+        "elevenlabs-sound-effect-v2": {"text": prompt, "durationSeconds": 5, "promptInfluence": 0.5},
+        # Аватар и анимация
+        "kling-v1-avatar-pro": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
+        "kling-v1-avatar-standard": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Talking head animation"},
+        "infinitalk-from-audio": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
+        "wan-2-2-animate-move": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
+        "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
+    }
+    return payloads.get(model, None)
+
 # ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
@@ -178,9 +464,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "🤖 *Привет! Я бот с поддержкой ИИ (MashaGPT).*\n\n"
         "Я умею:\n"
-        "✏️ генерировать текст (GPT-5-nano)\n"
-        "🖼 создавать изображения (Nano Banana 2)\n"
-        "🎬 генерировать видео (Kling 2.6)\n\n"
+        "✏️ генерировать текст (много моделей, некоторые бесплатные)\n"
+        "🖼 создавать изображения (бесплатные – 5 в неделю, платные – за промты)\n"
+        "🎬 генерировать видео (платно, цена зависит от модели)\n"
+        "✨ обрабатывать изображения (удаление фона, апскейл, замена лица и т.д.)\n"
+        "🎵 озвучивать текст, создавать диалоги и звуковые эффекты\n"
+        "🤖 создавать аватары и анимацию\n\n"
         "*Я помню контекст диалога!* Просто отправляйте сообщения, и я буду отвечать, учитывая историю.\n"
         "Чтобы сменить режим или сбросить историю, используйте кнопки внизу.\n\n"
         "Выберите действие:",
@@ -205,30 +494,77 @@ async def clear_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     )
     return MAIN_MENU
 
+async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    bal = get_user_balance(user_id)
+    img_used = get_weekly_image_count(user_id)
+    await update.message.reply_text(
+        f"💰 Ваш баланс (для платных услуг): {bal} промтов\n"
+        f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе",
+        reply_markup=get_main_keyboard()
+    )
+
+async def buy_promts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Заглушка – в реальности здесь интеграция с DonationAlerts или Telegram Stars
+    await update.message.reply_text(
+        "⭐ Пополнение промтов временно недоступно. Свяжитесь с администратором.",
+        reply_markup=get_main_keyboard()
+    )
+
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "✏️ Генерация текста":
         await update.message.reply_text(
-            "Введите ваш запрос. Я буду помнить контекст, пока вы не вернётесь в главное меню.",
-            reply_markup=get_cancel_keyboard()
+            "Выберите модель текста:",
+            reply_markup=get_text_models_keyboard()
         )
         return TEXT_GEN
     elif text == "🖼 Генерация изображения":
         await update.message.reply_text(
-            "Опишите, что нужно сгенерировать (изображение будет создано по модели Nano Banana 2):",
-            reply_markup=get_cancel_keyboard()
+            "Выберите модель изображения (бесплатные – до 5 в неделю, платные – снимают промты):",
+            reply_markup=get_image_models_keyboard()
         )
         return IMAGE_GEN
     elif text == "🎬 Генерация видео":
         await update.message.reply_text(
-            "Опишите сценарий для видео (Kling 2.6, 5 секунд):",
-            reply_markup=get_cancel_keyboard()
+            "Выберите модель видео:",
+            reply_markup=get_video_models_keyboard()
         )
         return VIDEO_GEN
+    elif text == "✨ Обработка изображений":
+        await update.message.reply_text(
+            "Выберите модель обработки:",
+            reply_markup=get_edit_models_keyboard()
+        )
+        return EDIT_GEN
+    elif text == "🎵 Аудио (озвучка, эффекты)":
+        await update.message.reply_text(
+            "Выберите модель аудио:",
+            reply_markup=get_audio_models_keyboard()
+        )
+        return AUDIO_GEN
+    elif text == "🤖 Аватар / анимация":
+        await update.message.reply_text(
+            "Выберите модель аватара или анимации:",
+            reply_markup=get_avatar_models_keyboard()
+        )
+        return AVATAR_GEN
     elif text == "🧹 Сбросить диалог":
         return await clear_dialog(update, context)
+    elif text == "💰 Мой баланс":
+        await show_balance(update, context)
+        return MAIN_MENU
+    elif text == "⭐ Пополнить промты":
+        await buy_promts(update, context)
+        return MAIN_MENU
+    elif text == "🔙 Главное меню":
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+        return MAIN_MENU
     else:
-        # Если пользователь прислал текст вне меню, переходим в режим диалога
+        # Если пользователь прислал текст вне меню, переходим в режим диалога с моделью по умолчанию
         return await start_dialog(update, context, text)
 
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
@@ -240,78 +576,319 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
 
     history = get_history(user_id, limit=10)
 
+    # Используем модель по умолчанию (бесплатную)
+    model = "gpt-5-nano"
+    price = MODEL_PRICES.get(model, 0)
+
+    # Проверяем баланс только для платных моделей
+    if price > 0:
+        if get_user_balance(user_id) < price:
+            await update.message.reply_text(
+                f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}. Пополните баланс.",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+        if not deduct_balance(user_id, price):
+            await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+
     try:
         await update.message.reply_chat_action("typing")
-        answer = await masha_text_generate(user_message, history)
+        answer = await masha_text_generate(user_message, history, model)
         await send_long_message(update, answer)
         save_message(user_id, "assistant", answer)
     except Exception as e:
         logger.exception("Ошибка генерации текста")
         await update.message.reply_text(
             "❌ Произошла ошибка при генерации. Попробуйте позже.",
-            reply_markup=get_cancel_keyboard()
+            reply_markup=get_main_keyboard()
         )
-    return DIALOG
+        # Если списали, но произошла ошибка – возвращаем
+        if price > 0:
+            add_balance(user_id, price)
+    return MAIN_MENU
 
-async def handle_text_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text == "🔙 Главное меню":
-        return await cancel(update, context)
-    return await start_dialog(update, context, update.message.text)
+# ------------------- Универсальный обработчик выбора модели -------------------
+async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, keyboard_func) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
 
-async def handle_image_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text == "🔙 Главное меню":
-        return await cancel(update, context)
+    # Получаем список моделей для категории
+    models = []
+    if category == "text":
+        models = [
+            ("gpt-5-nano", "GPT-5 nano", 0),
+            ("gpt-5-mini", "GPT-5 mini", 0),
+            ("gpt-4o-mini", "GPT-4o mini", 0),
+            ("gpt-4.1-nano", "GPT-4.1 nano", 0),
+            ("deepseek-chat", "DeepSeek Chat", 0),
+            ("deepseek-reasoner", "DeepSeek Reasoner", 0),
+            ("grok-4-1-fast-reasoning", "Grok 4.1 Fast (reasoning)", 0),
+            ("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast", 0),
+            ("grok-3-mini", "Grok 3 mini", 0),
+            ("gemini-2.0-flash", "Gemini 2.0 Flash", 0),
+            ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
+            ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0),
+            ("gpt-5.4", "GPT-5.4", 15),
+            ("gpt-5.1", "GPT-5.1", 10),
+            ("gpt-5", "GPT-5", 10),
+            ("gpt-4.1", "GPT-4.1", 8),
+            ("gpt-4o", "GPT-4o", 10),
+            ("o3-mini", "O3-mini", 4.4),
+            ("o3", "O3", 40),
+            ("o1", "O1", 60),
+            ("claude-haiku-4-5", "Claude Haiku 4.5", 5),
+            ("claude-sonnet-4-5", "Claude Sonnet 4.5", 15),
+            ("claude-opus-4-5", "Claude Opus 4.5", 25),
+            ("gemini-3-flash", "Gemini 3 Flash", 3),
+            ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
+            ("gemini-3-pro", "Gemini 3 Pro", 16),
+            ("gemini-3-pro-image", "Gemini 3 Pro Image", 12),
+        ]
+    elif category == "image":
+        models = [
+            ("z-image", "Z-Image", 6),
+            ("grok-imagine-text-to-image", "Grok Imagine", 8),
+            ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
+            ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
+            ("recraft-crisp-upscale", "Recraft Crisp Upscale", 10),
+            ("recraft-remove-background", "Recraft Remove Background", 5),
+            ("topaz-image-upscale", "Topaz Image Upscale", 15),
+            ("flux-2", "Flux 2", 15),
+            ("qwen-edit-multiangle", "Qwen Edit Multiangle", 15),
+            ("nano-banana-2", "Nano Banana 2", 5),
+            ("nano-banana-pro", "Nano Banana Pro", 5),
+            ("midjourney", "Midjourney", 30),
+            ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 100),
+            ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 100),
+            ("ideogram-v3-reframe", "Ideogram V3 Reframe", 18),
+        ]
+    elif category == "video":
+        models = [
+            ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
+            ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
+            ("wan-2-5-text-to-video", "Wan 2.5 (txt2vid)", 3),
+            ("wan-2-6-image-to-video", "Wan 2.6 (img2vid)", 3),
+            ("wan-2-6-video-to-video", "Wan 2.6 (vid2vid)", 3),
+            ("wan-2-5-image-to-video", "Wan 2.5 (img2vid)", 3),
+            ("sora-2-text-to-video", "Sora 2 (txt2vid)", 3),
+            ("sora-2-image-to-video", "Sora 2 (img2vid)", 3),
+            ("veo-3-1", "Google Veo 3.1", 5),
+            ("kling-2-6-text-to-video", "Kling 2.6 (txt2vid)", 6),
+            ("kling-v2-5-turbo-pro", "Kling V2.5 Turbo Pro", 6),
+            ("kling-2-6-image-to-video", "Kling 2.6 (img2vid)", 6),
+            ("kling-v2-5-turbo-image-to-video-pro", "Kling V2.5 Turbo I2V Pro", 5),
+            ("sora-2-pro-text-to-video", "Sora 2 Pro (txt2vid)", 5),
+            ("sora-2-pro-image-to-video", "Sora 2 Pro (img2vid)", 5),
+            ("sora-2-pro-storyboard", "Sora 2 Pro Storyboard", 7),
+            ("hailuo-2-3", "Hailuo 2.3", 4),
+            ("minimax-video-01-director", "Minimax Video-01 Director", 4),
+            ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
+            ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6),
+        ]
+    elif category == "edit":
+        models = [
+            ("recraft-crisp-upscale", "Recraft Crisp Upscale", 10),
+            ("recraft-remove-background", "Recraft Remove Background", 5),
+            ("topaz-image-upscale", "Topaz Image Upscale", 15),
+            ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
+            ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
+            ("qwen-edit-multiangle", "Qwen Edit Multiangle", 15),
+        ]
+    elif category == "audio":
+        models = [
+            ("elevenlabs-tts-multilingual-v2", "Озвучка (Multilingual)", 0),
+            ("elevenlabs-tts-turbo-2-5", "Быстрая озвучка (Turbo)", 0),
+            ("elevenlabs-text-to-dialogue-v3", "Диалоги (Dialogue V3)", 0),
+            ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5),
+        ]
+    elif category == "avatar":
+        models = [
+            ("kling-v1-avatar-standard", "Kling Avatar Standard", 8),
+            ("kling-v1-avatar-pro", "Kling Avatar Pro", 16),
+            ("infinitalk-from-audio", "Infinitalk (говорящая голова)", 1.1),
+            ("wan-2-2-animate-move", "Wan Animate Move", 0.75),
+            ("wan-2-2-animate-replace", "Wan Animate Replace", 0.75),
+        ]
+    else:
+        await update.message.reply_text("Ошибка категории.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
 
-    prompt = update.message.text
+    # Ищем выбранную модель
+    for model_id, label, price in models:
+        btn_text = f"{label} ({'бесплатно' if price == 0 else f'{price} промтов'})"
+        if text == btn_text:
+            context.user_data['selected_model'] = model_id
+            context.user_data['model_price'] = price
+            context.user_data['model_category'] = category
+
+            # Если модель требует изображения (для обработки, аватаров, face-swap, qwen, etc.)
+            if model_id in ["codeplugtech-face-swap", "cdlingram-face-swap"]:
+                # Два изображения: target и swap
+                context.user_data['temp'] = {}
+                await update.message.reply_text(
+                    "Отправьте целевое изображение (на которое будет перенесено лицо):",
+                    reply_markup=get_cancel_keyboard()
+                )
+                # Здесь нужно сохранить состояние для ожидания двух фото – в этой версии для простоты опустим
+                # В реальном боте нужно реализовать цепочку из двух состояний.
+                # Для краткости временно сообщаем, что функция в разработке.
+                await update.message.reply_text("Извините, функция замены лица в разработке. Пока доступны только простые запросы.")
+                return MAIN_MENU
+            elif model_id in ["qwen-edit-multiangle"]:
+                context.user_data['temp'] = {}
+                await update.message.reply_text(
+                    "Отправьте исходное изображение объекта:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await update.message.reply_text("Функция мультиракурса в разработке.")
+                return MAIN_MENU
+            elif model_id in ["kling-v1-avatar-pro", "kling-v1-avatar-standard", "infinitalk-from-audio"]:
+                await update.message.reply_text(
+                    "Отправьте фото лица, затем аудиофайл (текст).",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await update.message.reply_text("Функция аватара в разработке.")
+                return MAIN_MENU
+            elif model_id in ["wan-2-2-animate-move", "wan-2-2-animate-replace"]:
+                await update.message.reply_text(
+                    "Отправьте видео с движением, затем изображение персонажа.",
+                    reply_markup=get_cancel_keyboard()
+                )
+                await update.message.reply_text("Функция анимации в разработке.")
+                return MAIN_MENU
+            elif model_id in ["recraft-crisp-upscale", "recraft-remove-background", "topaz-image-upscale"]:
+                await update.message.reply_text(
+                    "Отправьте изображение, которое нужно обработать:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                context.user_data['awaiting_image'] = True
+                return EDIT_GEN  # временно
+            else:
+                # Обычный текстовый/медийный запрос
+                await update.message.reply_text(
+                    f"Выбрана модель: {label}\n\nВведите запрос:",
+                    reply_markup=get_cancel_keyboard()
+                )
+                if category == "text":
+                    return TEXT_GEN
+                elif category == "image":
+                    return IMAGE_GEN
+                elif category == "video":
+                    return VIDEO_GEN
+                elif category == "audio":
+                    return AUDIO_GEN
+                else:
+                    return MAIN_MENU
+
+    # Если не нашли модель
+    await update.message.reply_text("Пожалуйста, выберите модель из списка.")
+    return MAIN_MENU
+
+# ------------------- Обработчики для конкретных категорий -------------------
+async def handle_text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "text", get_text_models_keyboard)
+
+async def handle_image_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "image", get_image_models_keyboard)
+
+async def handle_video_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "video", get_video_models_keyboard)
+
+async def handle_edit_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "edit", get_edit_models_keyboard)
+
+async def handle_audio_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "audio", get_audio_models_keyboard)
+
+async def handle_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_model_selection(update, context, "avatar", get_avatar_models_keyboard)
+
+# ------------------- Универсальный обработчик ввода для медиа -------------------
+async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str) -> int:
     user_id = update.effective_user.id
-    await update.message.reply_chat_action("upload_photo")
+    model = context.user_data.get('selected_model')
+    price = context.user_data.get('model_price', 0)
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    # Для изображений, видео, аудио – используем create_task
+    payload = build_payload(model, prompt=text)
+    if not payload:
+        await update.message.reply_text("❌ Не удалось сформировать запрос для этой модели.")
+        return MAIN_MENU
+
+    # Проверка баланса для платных моделей
+    if price > 0:
+        if get_user_balance(user_id) < price:
+            await update.message.reply_text(
+                f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}. Пополните баланс.",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+        if not deduct_balance(user_id, price):
+            await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+
+    # Для бесплатных изображений – проверяем лимит (только для категории image и price==0)
+    if category == "image" and price == 0:
+        used = get_weekly_image_count(user_id)
+        if used >= 5:
+            await update.message.reply_text(
+                "❌ Вы уже использовали все 5 бесплатных генераций изображений на этой неделе. Лимит обновится в понедельник.",
+                reply_markup=get_main_keyboard()
+            )
+            if price > 0:
+                add_balance(user_id, price)
+            return MAIN_MENU
+
     try:
-        img_bytes = await masha_image_generate(prompt)
-        await update.message.reply_photo(
-            photo=io.BytesIO(img_bytes),
-            caption=f"🖼 Ваше изображение по запросу:\n{prompt}",
-            reply_markup=get_main_keyboard()
-        )
-        save_message(user_id, "user", f"Создай изображение: {prompt}")
-        save_message(user_id, "assistant", "Изображение сгенерировано")
+        await update.message.reply_chat_action("upload_photo" if "image" in category else "typing")
+        # Для видео и аудио – скачиваем результат и отправляем файлом
+        if category == "video" or category == "audio" or category == "edit":
+            result_bytes = await masha_media_generate(model, payload)
+            if "video" in model or category == "video":
+                await update.message.reply_video(video=io.BytesIO(result_bytes), caption=f"🎬 Результат")
+            elif "audio" in model or category == "audio":
+                await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
+            else:
+                await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+        else:
+            result_bytes = await masha_media_generate(model, payload)
+            await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+
+        # Увеличиваем счётчик только для бесплатных изображений
+        if category == "image" and price == 0:
+            increment_weekly_image_count(user_id)
+        save_message(user_id, "user", f"{category} запрос: {text}")
+        save_message(user_id, "assistant", "Контент сгенерирован")
     except Exception as e:
-        logger.exception("Ошибка генерации изображения")
-        await update.message.reply_text(
-            "❌ Не удалось создать изображение. Проверьте API-ключ MashaGPT или попробуйте другой запрос.",
-            reply_markup=get_main_keyboard()
-        )
+        logger.exception(f"Ошибка генерации в категории {category}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+        if price > 0:
+            add_balance(user_id, price)
+    finally:
+        await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-async def handle_video_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text == "🔙 Главное меню":
-        return await cancel(update, context)
+async def handle_text_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_media_input(update, context, "text")
 
-    prompt = update.message.text
-    await update.message.reply_chat_action("upload_video")
-    try:
-        video_url = await masha_video_generate(prompt)
-        # Отправляем ссылку на видео (Telegram не принимает видео по ссылке, только файл)
-        # Поэтому лучше скачать и отправить файлом.
-        async with aiohttp.ClientSession() as session:
-            async with session.get(video_url) as resp:
-                video_bytes = await resp.read()
-        await update.message.reply_video(
-            video=io.BytesIO(video_bytes),
-            caption=f"🎬 Видео по запросу:\n{prompt}",
-            reply_markup=get_main_keyboard()
-        )
-        save_message(update.effective_user.id, "user", f"Создай видео: {prompt}")
-        save_message(update.effective_user.id, "assistant", "Видео сгенерировано")
-    except Exception as e:
-        logger.exception("Ошибка генерации видео")
-        await update.message.reply_text(
-            "❌ Функция видео временно недоступна или произошла ошибка.",
-            reply_markup=get_main_keyboard()
-        )
-    return MAIN_MENU
+async def handle_image_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_media_input(update, context, "image")
 
-async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await start_dialog(update, context)
+async def handle_video_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_media_input(update, context, "video")
+
+async def handle_edit_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_media_input(update, context, "edit")
+
+async def handle_audio_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await handle_media_input(update, context, "audio")
 
 # ------------------- Запуск -------------------
 def main():
@@ -328,10 +905,13 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
-            TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],
-            IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_gen)],
-            VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_gen)],
-            DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_gen)],
+            TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_selection)],
+            IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_selection)],
+            VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_selection)],
+            EDIT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_selection)],
+            AUDIO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_audio_selection)],
+            AVATAR_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_selection)],
+            DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_dialog)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -340,7 +920,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_dialog))
     app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    logger.info("Бот запущен (текст, изображения и видео через Masha)")
+    logger.info("Бот запущен (все модели MashaGPT)")
     app.run_polling()
 
 if __name__ == "__main__":
