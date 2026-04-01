@@ -350,7 +350,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
     payload = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": 1024,
+        "max_completion_tokens": 1024,   # Исправлено: max_tokens → max_completion_tokens
         "temperature": 0.7
     }
 
@@ -751,6 +751,12 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     if user_message is None:
         user_message = update.message.text
 
+    # Обработка кнопки возврата в главное меню
+    if user_message == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
     # Получаем модель из контекста или используем дефолтную
     model = context.user_data.get('selected_model', 'gpt-5-nano')
     price = MODEL_PRICES.get(model, 0)
@@ -786,12 +792,14 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
             add_balance(user_id, price)
     return DIALOG  # остаёмся в диалоге, чтобы можно было продолжать
 
-# Обработчики для медиа-генерации (упрощённые)
+# Обработчики для медиа-генерации
 async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str) -> int:
     user_id = update.effective_user.id
     model = context.user_data.get('selected_model')
     price = context.user_data.get('model_price', 0)
     text = update.message.text
+
+    # Обработка кнопки возврата в главное меню
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
