@@ -354,7 +354,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
     payload = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": 1024,
+        "max_completion_tokens": 4096,
         "temperature": 1.0
     }
 
