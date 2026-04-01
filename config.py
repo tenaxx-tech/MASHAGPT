@@ -14,8 +14,8 @@ if not MASHA_API_KEY:
     print("❌ MASHA_API_KEY не задан")
     sys.exit(1)
 
-# Только корневой URL, без /v1
-MASHA_BASE_URL = os.getenv("MASHA_BASE_URL", "https://openapi.masha.ai")
+# Корректный базовый URL MashaGPT
+MASHA_BASE_URL = os.getenv("MASHA_BASE_URL", "https://api.mashagpt.ru/v1")
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 PORT = int(os.getenv("PORT", 8080))
