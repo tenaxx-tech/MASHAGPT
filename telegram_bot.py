@@ -164,7 +164,7 @@ def get_text_models_keyboard():
 
 def get_image_models_keyboard():
     models = [
-        ("z-image", "Z-Image", 6),
+        ("z-image", "Z-Image", 0),
         ("grok-imagine-text-to-image", "Grok Imagine", 8),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
         ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
