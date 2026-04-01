@@ -1,22 +1,81 @@
-# config.py
 import os
+import sys
 
-# ========== VK ==========
-VK_TOKEN = "vk1.a._NlEkMBTkYci7P-vn8bmBQcfPQLRTWOwigIu6e6lUVjEuBvKM70LWKJPSvBqyNoUmkdDRGRwyfqvv6fJz-WzUmnOnPp2YEdm1ipkwoNVt8pY8B4B0aolMz5IZsGPxE1nOZbyU-W-fl3vzb70uUeuSl5z6_f3Wqt28xu1RB5ZXn8tei2TkeZzhTyJPERrR9-HjBI6f2aP1OLTV4bpC4-cNQ"
+# ------------------------------------------------------------------
+# Telegram Bot
+# ------------------------------------------------------------------
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TELEGRAM_TOKEN:
+    print("❌ Ошибка: TELEGRAM_TOKEN не задан")
+    sys.exit(1)
 
-# ========== MashaGPT ==========
-MASHA_API_KEY = "sk-4610437a509e3065abc0f5bab984ce07fdb33b6a98cf9f0964dda3b392fcabc0"
-MASHA_BASE_URL = "https://api.mashagpt.ru/v1"
+# ------------------------------------------------------------------
+# Felo AI
+# ------------------------------------------------------------------
+FELO_API_KEY = os.getenv("FELO_API_KEY")
+if not FELO_API_KEY:
+    print("❌ Ошибка: FELO_API_KEY не задан")
+    sys.exit(1)
 
-# ========== DonationAlerts ==========
-DA_CLIENT_ID = "18402"
-DA_CLIENT_SECRET = "7tadAniwvnjl07meRJAim7UiI4JGNhFKsgGbF85v"
-DA_REDIRECT_URI = "https://ni9nlo-77-222-112-208.ru.tuna.am/callback"
-DA_SECRET_KEY = "vkdmitriy"
-DA_USERNAME = "designdmitriy"
+FELO_API_URL = os.getenv("FELO_API_URL", "https://openapi.felo.ai/v2/chat")
 
-# ========== Telegram ==========
-TELEGRAM_TOKEN = "8727234765:AAFqCdOKr91Q4yOP7gH6_kcvvkBkidP6oU4"  # замените на свой
+# ------------------------------------------------------------------
+# Replicate
+# ------------------------------------------------------------------
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+if not REPLICATE_API_TOKEN:
+    print("❌ Ошибка: REPLICATE_API_TOKEN не задан")
+    sys.exit(1)
 
-# ========== DeepSeek ==========
-DEEPSEEK_API_KEY = "sk-018cbd7cb1a34820ba6432bc3b146b57"  # если используете DeepSeek для текста
+# ------------------------------------------------------------------
+# OpenAI (Sora 2)
+# ------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    print("❌ Ошибка: OPENAI_API_KEY не задан")
+    sys.exit(1)
+
+# ------------------------------------------------------------------
+# MASHA (предполагаемая интеграция)
+# ------------------------------------------------------------------
+MASHA_API_KEY = os.getenv("MASHA_API_KEY")
+if not MASHA_API_KEY:
+    print("❌ Ошибка: MASHA_API_KEY не задан")
+    sys.exit(1)
+
+MASHA_BASE_URL = os.getenv("MASHA_BASE_URL", "https://api.masha.example.com")
+
+# ------------------------------------------------------------------
+# DonationAlerts
+# ------------------------------------------------------------------
+DA_CLIENT_ID = os.getenv("DA_CLIENT_ID")
+if not DA_CLIENT_ID:
+    print("❌ Ошибка: DA_CLIENT_ID не задан")
+    sys.exit(1)
+
+DA_CLIENT_SECRET = os.getenv("DA_CLIENT_SECRET")
+if not DA_CLIENT_SECRET:
+    print("❌ Ошибка: DA_CLIENT_SECRET не задан")
+    sys.exit(1)
+
+DA_REDIRECT_URI = os.getenv("DA_REDIRECT_URI", "https://your-domain.ru/callback")
+DA_SECRET_KEY = os.getenv("DA_SECRET_KEY")
+if not DA_SECRET_KEY:
+    print("❌ Ошибка: DA_SECRET_KEY не задан")
+    sys.exit(1)
+
+DA_USERNAME = os.getenv("DA_USERNAME", "designdmitriy")   # не секрет, можно дефолт
+
+# ------------------------------------------------------------------
+# DeepSeek
+# ------------------------------------------------------------------
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    print("❌ Ошибка: DEEPSEEK_API_KEY не задан")
+    sys.exit(1)
+
+# ------------------------------------------------------------------
+# Общие настройки
+# ------------------------------------------------------------------
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+PORT = int(os.getenv("PORT", 8080))   # Railway подставляет PORT
