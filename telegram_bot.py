@@ -2,13 +2,16 @@ import asyncio
 import io
 import logging
 from typing import List, Tuple
+import time
 
 import aiohttp
+import httpx
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, ConversationHandler
 )
+from telegram.request import HTTPXRequest
 
 from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
 from database import (
@@ -43,7 +46,54 @@ def get_cancel_keyboard():
     )
 
 # ------------------------------------------------------------------
-# Masha API (текст, изображения)
+# Вспомогательные функции MashaGPT (асинхронные задачи)
+# ------------------------------------------------------------------
+async def create_task(model: str, payload: dict, retries=3) -> str:
+    """Создаёт задачу и возвращает её ID."""
+    url = f"{MASHA_BASE_URL}/tasks/{model}"
+    headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
+    for attempt in range(retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
+                    if resp.status == 429:
+                        wait = 2 ** attempt
+                        logger.warning(f"429 Too Many Requests, повтор через {wait} сек")
+                        await asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    return data.get("id")
+        except Exception as e:
+            logger.error(f"Ошибка создания задачи {model} (попытка {attempt+1}): {e}")
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(2)
+    raise Exception("Не удалось создать задачу")
+
+async def get_task_status(task_id: str) -> dict:
+    url = f"{MASHA_BASE_URL}/tasks/{task_id}"
+    headers = {"x-api-key": MASHA_API_KEY}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, timeout=30) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+async def wait_for_task(task_id: str, timeout=180) -> dict:
+    start = time.time()
+    while time.time() - start < timeout:
+        data = await get_task_status(task_id)
+        status = data.get("status")
+        if status == "COMPLETED":
+            return data
+        elif status == "FAILED":
+            error = data.get("errorMessage", "Unknown error")
+            raise Exception(f"Задача провалилась: {error}")
+        await asyncio.sleep(2)
+    raise Exception("Таймаут ожидания задачи")
+
+# ------------------------------------------------------------------
+# Masha API (текст, изображения, видео)
 # ------------------------------------------------------------------
 async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> str:
     """Генерация текста через Masha (модель gpt-5-nano)"""
@@ -52,7 +102,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> st
         messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    url = f"{MASHA_BASE_URL}/v1/chat/completions"
+    url = f"{MASHA_BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "x-api-key": MASHA_API_KEY
@@ -75,34 +125,42 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]]) -> st
 
 async def masha_image_generate(prompt: str) -> bytes:
     """Генерация изображения через Masha (nano-banana-2)"""
-    url = f"{MASHA_BASE_URL}/v1/images/generations"
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": MASHA_API_KEY
-    }
+    model = "nano-banana-2"
     payload = {
-        "model": "nano-banana-2",
         "prompt": prompt,
-        "aspect_ratio": "1:1",
-        "size": "1024x1024"
+        "aspectRatio": "1:1",
+        "resolution": "1K"
     }
-
+    task_id = await create_task(model, payload)
+    result = await wait_for_task(task_id)
+    outputs = result.get("output", [])
+    if not outputs:
+        raise Exception("No output in response")
+    media_url = outputs[0].get("url")
+    if not media_url:
+        raise Exception("No URL in output")
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers, timeout=60) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                logger.error(f"Image API error {resp.status}: {error_text}")
-                raise Exception(f"Image API error: {resp.status}")
-            data = await resp.json()
-            image_url = data.get("data", [{}])[0].get("url")
-            if not image_url:
-                raise Exception("No image URL in response")
-            async with session.get(image_url) as img_resp:
-                return await img_resp.read()
+        async with session.get(media_url) as resp:
+            return await resp.read()
 
 async def masha_video_generate(prompt: str) -> str:
-    """Заглушка для видео"""
-    return "🎬 Генерация видео временно недоступна. Функция в разработке."
+    """Генерация видео – заглушка (модель kling-2-6-text-to-video)"""
+    model = "kling-2-6-text-to-video"
+    payload = {
+        "prompt": prompt,
+        "aspectRatio": "16:9",
+        "duration": "5",
+        "sound": False
+    }
+    task_id = await create_task(model, payload)
+    result = await wait_for_task(task_id, timeout=300)  # видео дольше
+    outputs = result.get("output", [])
+    if not outputs:
+        return "❌ Не удалось получить видео"
+    media_url = outputs[0].get("url")
+    if not media_url:
+        return "❌ Нет URL в ответе"
+    return media_url  # пока просто вернём ссылку
 
 # ------------------------------------------------------------------
 # Обработчики
@@ -112,11 +170,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     update_user_activity(user_id)
     await update.message.reply_text(
-        "🤖 *Привет! Я бот с поддержкой ИИ.*\n\n"
+        "🤖 *Привет! Я бот с поддержью ИИ.*\n\n"
         "Я умею:\n"
         "✏️ генерировать текст (Masha GPT-5-nano)\n"
         "🖼 создавать изображения (Nano Banana)\n"
-        "🎬 генерировать видео (в разработке)\n\n"
+        "🎬 генерировать видео (Kling 2.6)\n\n"
         "*Я помню контекст диалога!* Просто отправляйте сообщения, и я буду отвечать, учитывая историю.\n"
         "Чтобы сменить режим или сбросить историю, используйте кнопки внизу.\n\n"
         "Выберите действие:",
@@ -157,7 +215,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return IMAGE_GEN
     elif text == "🎬 Генерация видео":
         await update.message.reply_text(
-            "Опишите сценарий для видео (пока в разработке):",
+            "Опишите сценарий для видео (модель Kling 2.6):",
             reply_markup=get_cancel_keyboard()
         )
         return VIDEO_GEN
@@ -179,7 +237,12 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     try:
         await update.message.reply_chat_action("typing")
         answer = await masha_text_generate(user_message, history)
-        await update.message.reply_text(answer, reply_markup=get_cancel_keyboard())
+        # Разбиваем длинный ответ
+        if len(answer) > 4000:
+            for i in range(0, len(answer), 4000):
+                await update.message.reply_text(answer[i:i+4000], reply_markup=get_cancel_keyboard())
+        else:
+            await update.message.reply_text(answer, reply_markup=get_cancel_keyboard())
         save_message(user_id, "assistant", answer)
     except Exception as e:
         logger.exception("Ошибка генерации текста")
@@ -213,7 +276,7 @@ async def handle_image_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     except Exception as e:
         logger.exception("Ошибка генерации изображения")
         await update.message.reply_text(
-            "❌ Не удалось создать изображение. Попробуйте другой запрос.",
+            f"❌ Не удалось создать изображение: {e}",
             reply_markup=get_main_keyboard()
         )
     return MAIN_MENU
@@ -226,14 +289,20 @@ async def handle_video_gen(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_chat_action("typing")
     try:
         result = await masha_video_generate(prompt)
-        await update.message.reply_text(
-            result,
-            reply_markup=get_main_keyboard()
-        )
+        if result.startswith("http"):
+            await update.message.reply_text(
+                f"🎬 Видео готово: {result}",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                result,
+                reply_markup=get_main_keyboard()
+            )
     except Exception as e:
         logger.exception("Ошибка генерации видео")
         await update.message.reply_text(
-            "❌ Функция видео временно недоступна.",
+            f"❌ Функция видео временно недоступна: {e}",
             reply_markup=get_main_keyboard()
         )
     return MAIN_MENU
@@ -252,7 +321,16 @@ def main():
         logger.error("MASHA_API_KEY не задан")
         return
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Настройка прокси (если нужен)
+    # proxy_url = "socks5://127.0.0.1:9050"  # пример
+    proxy_url = None
+    if proxy_url:
+        request = HTTPXRequest(
+            client=httpx.AsyncClient(proxies=proxy_url, timeout=httpx.Timeout(30.0))
+        )
+        app = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
+    else:
+        app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -270,7 +348,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_dialog))
     app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    logger.info("Бот запущен (текст и изображения через Masha)")
+    logger.info("Бот запущен (текст, изображения и видео через Masha)")
     app.run_polling()
 
 if __name__ == "__main__":
