@@ -6,10 +6,10 @@ from typing import List, Tuple
 
 import aiohttp
 from aiohttp import web
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, ConversationHandler
+    ContextTypes, ConversationHandler, PreCheckoutQueryHandler
 )
 
 from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
@@ -309,7 +309,6 @@ async def get_task_status(task_id: str):
                 data = await resp.json()
                 return data
     except aiohttp.ContentTypeError:
-        # Если ответ не JSON, читаем как текст
         text = await resp.text()
         logger.error(f"Ответ не JSON: {text[:200]}")
         return text
@@ -395,7 +394,6 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
             return await resp.read()
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
-    # Сокращённая версия – в полном коде все модели, здесь оставим основные
     payloads = {
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
@@ -449,9 +447,27 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
+    # Инлайн-кнопка для пополнения
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]
+    ])
     await update.message.reply_text(
-        f"💰 Баланс: {bal} промтов\n🖼 Бесплатные изображения: {img_used}/5",
-        reply_markup=get_main_keyboard()
+        f"💰 Ваш баланс: {bal} промтов\n🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе",
+        reply_markup=keyboard
+    )
+
+async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
+    if chat_id is None:
+        chat_id = update.effective_chat.id
+    title = "Пополнение баланса"
+    description = "100 звёзд = 100 промтов"
+    payload = "topup_100"
+    currency = "XTR"
+    prices = [{"label": "100 звёзд", "amount": 100}]
+    await context.bot.send_invoice(
+        chat_id, title, description, payload, "", currency, prices,
+        start_parameter="topup", need_name=False, need_phone_number=False,
+        need_email=False, need_shipping_address=False, is_flexible=False
     )
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -485,6 +501,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif text == "💰 Мой баланс":
         await show_balance(update, context)
         return MAIN_MENU
+    elif text == "⭐ Пополнить промты":
+        await send_topup_invoice(update, context)
+        return MAIN_MENU
     elif text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
@@ -499,9 +518,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Список моделей для категории – взять из соответствующих клавиатур (упростим, используем словарь)
-    # Здесь для краткости оставим логику, но в реальном коде она полная.
-    # Вместо этого будем использовать предопределённый список.
     models = []
     if category == "text":
         models = [
@@ -607,7 +623,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.info(f"Генерация {category} с моделью {model}, payload={payload}")
 
-    # Платная проверка
     if price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -616,7 +631,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
-    # Лимит бесплатных изображений
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -647,6 +661,30 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     finally:
         await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
+
+# ------------------- Обработчики платежей -------------------
+async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    if query.invoice_payload == "topup_100":
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Неизвестный товар")
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    payment = update.message.successful_payment
+    amount = payment.total_amount  # в звёздах, например 100
+    add_balance(user_id, amount)
+    await update.message.reply_text(
+        f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.",
+        reply_markup=get_main_keyboard()
+    )
+
+async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "topup":
+        await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
 # ------------------- Health check и запуск -------------------
 async def health_check(request):
@@ -690,6 +728,9 @@ async def main_async():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("clear", clear_dialog))
     app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
     logger.info("Бот запущен")
     await app.initialize()
