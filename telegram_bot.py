@@ -9,7 +9,8 @@ from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, ConversationHandler, PreCheckoutQueryHandler
+    ContextTypes, ConversationHandler, PreCheckoutQueryHandler,
+    CallbackQueryHandler
 )
 
 from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
