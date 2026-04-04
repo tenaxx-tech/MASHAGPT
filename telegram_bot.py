@@ -5,6 +5,7 @@ import logging
 from typing import List, Tuple
 
 import aiohttp
+from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -164,7 +165,7 @@ def get_text_models_keyboard():
 
 def get_image_models_keyboard():
     models = [
-        ("z-image", "Z-Image", 0),
+        ("z-image", "Z-Image", 6),
         ("grok-imagine-text-to-image", "Grok Imagine", 8),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 10),
         ("cdlingram-face-swap", "Face Swap (CDIngram)", 10),
@@ -354,7 +355,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
     payload = {
         "model": model,
         "messages": messages,
-        "max_completion_tokens": 4096,   # Увеличено для учёта reasoning
+        "max_completion_tokens": 1024,   # уменьшено, чтобы избежать пустого ответа
         "temperature": 1.0
     }
 
@@ -368,16 +369,12 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
                 logger.error(f"Masha API error {resp.status}: {error_text}")
                 raise Exception(f"Masha error: {resp.status}")
             data = await resp.json()
-            # Логируем полный ответ (первые 500 символов)
             logger.info(f"Полный JSON ответ: {json.dumps(data, ensure_ascii=False)[:500]}")
-
-            # Пытаемся извлечь content
             content = None
             if "choices" in data and len(data["choices"]) > 0:
                 message = data["choices"][0].get("message", {})
                 content = message.get("content")
             if not content:
-                # Альтернативные поля (например, result, output)
                 content = data.get("result") or data.get("output")
             if not content:
                 logger.warning("Не удалось извлечь content из ответа")
@@ -469,6 +466,32 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
+
+# ------------------- HTTP сервер для вебхуков -------------------
+async def webhook_handler(request):
+    """Обработчик входящих обновлений от Telegram."""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.exception("Ошибка в вебхуке")
+        return web.Response(text="ERROR", status=500)
+
+async def start_http_server():
+    """Запускает aiohttp сервер для приёма вебхуков."""
+    app = web.Application()
+    app.router.add_post('/webhook', webhook_handler)
+    app.router.add_get('/health', lambda req: web.Response(text="OK"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    logger.info("HTTP сервер запущен на порту 8080, вебхук путь: /webhook")
+    # Бесконечное ожидание
+    while True:
+        await asyncio.sleep(3600)
 
 # ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -746,7 +769,6 @@ async def handle_audio_selection(update: Update, context: ContextTypes.DEFAULT_T
 async def handle_avatar_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await handle_model_selection(update, context, "avatar")
 
-# Универсальный обработчик для ввода текста (диалог)
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
     user_id = update.effective_user.id
     if user_message is None:
@@ -757,7 +779,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    model = context.user_data.get('selected_model', 'gpt-5-nano')
+    model = context.user_data.get('selected_model', 'gpt-4o-mini')  # по умолчанию gpt-4o-mini
     price = MODEL_PRICES.get(model, 0)
 
     save_message(user_id, "user", user_message)
@@ -806,7 +828,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     category = context.user_data.get('media_category')
     text = update.message.text
 
-    # Обработка кнопки возврата
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
@@ -822,8 +843,10 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     payload = build_payload(model, prompt=text)
     if not payload:
-        await update.message.reply_text("❌ Не удалось сформировать запрос для этой модели.")
+        await update.message.reply_text(f"❌ Не удалось сформировать запрос для модели {model}.")
         return MAIN_MENU
+
+    logger.info(f"Генерация {category} с моделью {model}, payload={payload}")
 
     # Проверка баланса для платных моделей
     if price > 0:
@@ -850,17 +873,19 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await update.message.reply_chat_action("upload_photo" if category != "audio" else "record_audio")
         result_bytes = await masha_media_generate(model, payload)
-        if category == "video":
-            await update.message.reply_video(video=io.BytesIO(result_bytes), caption=f"🎬 Результат")
-        elif category == "audio":
-            await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
+        if result_bytes:
+            if category == "video":
+                await update.message.reply_video(video=io.BytesIO(result_bytes), caption=f"🎬 Результат")
+            elif category == "audio":
+                await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
+            else:
+                await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+            if category == "image" and price == 0:
+                increment_weekly_image_count(user_id)
+            save_message(user_id, "user", f"{category} запрос: {text}")
+            save_message(user_id, "assistant", "Контент сгенерирован")
         else:
-            await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
-
-        if category == "image" and price == 0:
-            increment_weekly_image_count(user_id)
-        save_message(user_id, "user", f"{category} запрос: {text}")
-        save_message(user_id, "assistant", "Контент сгенерирован")
+            await update.message.reply_text("❌ Не удалось получить результат от сервера.")
     except Exception as e:
         logger.exception(f"Ошибка генерации в категории {category}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
@@ -870,33 +895,16 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# Устаревшие обработчики – оставлены для совместимости, но не используются в states
-async def handle_text_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context)
+# ------------------- Запуск с вебхуками -------------------
+async def main_async():
+    # Инициализация БД
+    init_db()
 
-async def handle_image_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context)
+    # Создаём приложение Telegram
+    global bot_app
+    bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-async def handle_video_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context)
-
-async def handle_edit_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context)
-
-async def handle_audio_generation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return await handle_media_input(update, context)
-
-# ------------------- Запуск -------------------
-def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("TELEGRAM_TOKEN не задан")
-        return
-    if not MASHA_API_KEY:
-        logger.error("MASHA_API_KEY не задан")
-        return
-
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
+    # Регистрируем обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -912,13 +920,37 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+    bot_app.add_handler(conv_handler)
+    bot_app.add_handler(CommandHandler("clear", clear_dialog))
+    bot_app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
 
-    app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("clear", clear_dialog))
-    app.add_handler(CommandHandler("help", lambda u,c: u.message.reply_text("Используйте меню.")))
+    # Инициализация приложения (для установки вебхука)
+    await bot_app.initialize()
+    await bot_app.start()
 
-    logger.info("Бот запущен (все модели MashaGPT)")
-    app.run_polling()
+    # Получаем публичный URL из переменной окружения или задаём вручную
+    public_url = os.getenv("PUBLIC_URL", "https://ваш_проект.bothost.ru")
+    webhook_url = f"{public_url}/webhook"
+    await bot_app.bot.set_webhook(url=webhook_url)
+    logger.info(f"Вебхук установлен на {webhook_url}")
+
+    # Запускаем HTTP сервер для приёма вебхуков
+    asyncio.create_task(start_http_server())
+
+    # Держим приложение активным
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        await bot_app.stop()
+        logger.info("Бот остановлен")
+
+def main():
+    # Загружаем переменные окружения из .env (если есть)
+    from dotenv import load_dotenv
+    load_dotenv()
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
+    import os
     main()
