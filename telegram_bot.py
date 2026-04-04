@@ -110,7 +110,7 @@ MODEL_PRICES = {
     "wan-2-2-animate-replace": 0.75,
 }
 
-# ------------------- Клавиатуры (сокращены для краткости, но полные) -------------------
+# ------------------- Клавиатуры -------------------
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton("✏️ Генерация текста")],
@@ -306,13 +306,14 @@ async def get_task_status(task_id: str):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                try:
+                    data = await resp.json()
+                except aiohttp.ContentTypeError:
+                    text = await resp.text()
+                    logger.error(f"Ответ не JSON: {text[:200]}")
+                    return text
                 resp.raise_for_status()
-                data = await resp.json()
                 return data
-    except aiohttp.ContentTypeError:
-        text = await resp.text()
-        logger.error(f"Ответ не JSON: {text[:200]}")
-        return text
     except Exception as e:
         logger.error(f"Ошибка получения статуса {task_id}: {e}")
         return None
@@ -324,7 +325,7 @@ async def wait_for_task(task_id: str, timeout=180):
         if not data:
             return None
         if isinstance(data, str):
-            logger.error(f"Строка вместо JSON: {data[:200]}")
+            # Это текст ошибки от API (например, "429 Too Many Requests")
             return data
         status = data.get("status")
         if status == "COMPLETED":
@@ -383,6 +384,7 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     if not result:
         raise Exception("Не удалось получить результат")
     if isinstance(result, str):
+        # Ошибка в виде строки (например, "429 Too Many Requests")
         raise Exception(f"Ошибка API: {result[:200]}")
     outputs = result.get("output", [])
     if not outputs:
@@ -396,6 +398,7 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     payloads = {
+        # Изображения
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
@@ -403,23 +406,52 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "flux-2": {"prompt": prompt, "model": "pro", "aspectRatio": "1:1", "resolution": "1K"},
         "midjourney": {"taskType": "mj_txt2img", "prompt": prompt, "aspectRatio": "1:1", "speed": "fast"},
         "gpt-image-1-5-text-to-image": {"prompt": prompt, "aspectRatio": "1:1", "quality": "medium"},
-        "recraft-remove-background": {"imageUrl": image_url} if image_url else None,
+        "gpt-image-1-5-image-to-image": {"prompt": prompt, "inputUrls": [image_url]} if image_url else None,
+        "ideogram-v3-reframe": {"imageUrl": image_url, "imageSize": "square", "renderingSpeed": "BALANCED"} if image_url else None,
         "recraft-crisp-upscale": {"imageUrl": image_url} if image_url else None,
+        "recraft-remove-background": {"imageUrl": image_url} if image_url else None,
         "topaz-image-upscale": {"imageUrl": image_url, "upscaleFactor": "2"} if image_url else None,
         "codeplugtech-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
                                    "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
+        "cdlingram-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
+                                "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
         "qwen-edit-multiangle": {"prompt": prompt, "image": image_url},
+        # Видео
         "grok-imagine-text-to-video": {"prompt": prompt, "aspectRatio": "3:2", "mode": "normal"},
         "wan-2-6-text-to-video": {"prompt": prompt, "duration": "5", "resolution": "1080p"},
+        "wan-2-5-text-to-video": {"prompt": prompt, "duration": "5", "aspectRatio": "16:9", "resolution": "1080p"},
+        "wan-2-6-image-to-video": {"prompt": prompt, "imageUrls": [image_url]} if image_url else None,
+        "wan-2-6-video-to-video": {"prompt": prompt, "videoUrls": [image_url]} if image_url else None,
+        "wan-2-5-image-to-video": {"prompt": prompt, "imageUrl": image_url} if image_url else None,
         "sora-2-text-to-video": {"prompt": prompt, "aspectRatio": "landscape", "duration": "10", "removeWatermark": True},
+        "sora-2-image-to-video": {"prompt": prompt, "imageUrls": [image_url]} if image_url else None,
         "veo-3-1": {"prompt": prompt, "model": "veo3_fast", "aspectRatio": "16:9"},
         "kling-2-6-text-to-video": {"prompt": prompt, "aspectRatio": "16:9", "duration": "5", "sound": False},
+        "kling-v2-5-turbo-pro": {"prompt": prompt, "aspectRatio": "16:9", "duration": "5", "cfgScale": 0.5},
+        "kling-2-6-image-to-video": {"prompt": prompt, "imageUrl": image_url, "duration": "5", "sound": False} if image_url else None,
+        "kling-v2-5-turbo-image-to-video-pro": {"prompt": prompt, "imageUrl": image_url, "duration": "5", "cfgScale": 0.5} if image_url else None,
+        "sora-2-pro-text-to-video": {"prompt": prompt, "aspectRatio": "landscape", "duration": "10", "size": "high"},
+        "sora-2-pro-image-to-video": {"prompt": prompt, "imageUrls": [image_url], "duration": "10", "resolution": "1080p"} if image_url else None,
+        "sora-2-pro-storyboard": {"duration": "15", "shots": [{"scene": prompt, "duration": 5}]},
+        "hailuo-2-3": {"prompt": prompt, "duration": "6", "resolution": "768P", "variant": "standard"},
+        "minimax-video-01-director": {"prompt": prompt, "promptOptimizer": True},
+        "seedance-v1-pro-fast": {"prompt": prompt, "imageUrl": image_url, "resolution": "720p", "duration": "5"} if image_url else None,
+        "kling-2-6-motion-control": {"prompt": prompt, "imageUrls": [image_url] if image_url else None, "characterOrientation": "image", "duration": 5},
+        # Аудио
         "elevenlabs-tts-multilingual-v2": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
+        "elevenlabs-tts-turbo-2-5": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
+        "elevenlabs-text-to-dialogue-v3": {"dialogue": [{"text": prompt, "voice": "Rachel"}], "stability": 0.5, "languageCode": "ru"},
         "elevenlabs-sound-effect-v2": {"text": prompt, "durationSeconds": 5, "promptInfluence": 0.5},
+        # Аватар и анимация
+        "kling-v1-avatar-pro": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
+        "kling-v1-avatar-standard": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Talking head animation"},
+        "infinitalk-from-audio": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
+        "wan-2-2-animate-move": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
+        "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
 
-# ------------------- Обработчики (основные) -------------------
+# ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
@@ -448,7 +480,6 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
-    # Инлайн-кнопка для пополнения
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]
     ])
@@ -522,20 +553,26 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
     models = []
     if category == "text":
         models = [
-            ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
-            ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
-            ("deepseek-chat", "DeepSeek Chat", 0), ("gpt-5.4", "GPT-5.4", 15)
+            ("gpt-4o-mini", "GPT-4o mini", 0),
+            ("gpt-5-mini", "GPT-5 mini", 0),
+            ("gpt-5-nano", "GPT-5 nano", 0),
+            ("gpt-4.1-nano", "GPT-4.1 nano", 0),
+            ("deepseek-chat", "DeepSeek Chat", 0),
+            ("gpt-5.4", "GPT-5.4", 15)
         ]
     elif category == "image":
         models = [
-            ("nano-banana-2", "Nano Banana 2", 0), ("midjourney", "Midjourney", 0),
-            ("flux-2", "Flux 2", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
+            ("nano-banana-2", "Nano Banana 2", 0),
+            ("midjourney", "Midjourney", 0),
+            ("flux-2", "Flux 2", 0),
+            ("grok-imagine-text-to-image", "Grok Imagine", 0),
             ("z-image", "Z-Image", 0)
         ]
     elif category == "video":
         models = [
             ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
-            ("sora-2-text-to-video", "Sora 2", 3), ("kling-2-6-text-to-video", "Kling 2.6", 6)
+            ("sora-2-text-to-video", "Sora 2", 3),
+            ("kling-2-6-text-to-video", "Kling 2.6", 6)
         ]
     else:
         models = []
@@ -617,6 +654,10 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Ошибка: не выбрана категория или модель.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
+    if not text or text.isspace():
+        await update.message.reply_text("Пожалуйста, введите текст запроса.", reply_markup=get_cancel_keyboard())
+        return AWAIT_PROMPT
+
     payload = build_payload(model, prompt=text)
     if not payload:
         await update.message.reply_text(f"❌ Не удалось сформировать запрос для модели {model}.")
@@ -624,6 +665,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.info(f"Генерация {category} с моделью {model}, payload={payload}")
 
+    # Проверка баланса для платных моделей
     if price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -632,6 +674,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
+    # Лимит бесплатных изображений
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -674,7 +717,7 @@ async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     payment = update.message.successful_payment
-    amount = payment.total_amount  # в звёздах, например 100
+    amount = payment.total_amount  # в звёздах
     add_balance(user_id, amount)
     await update.message.reply_text(
         f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.",
