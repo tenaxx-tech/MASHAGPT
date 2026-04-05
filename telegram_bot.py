@@ -309,26 +309,28 @@ async def get_task_status(task_id: str):
         logger.error(f"Ошибка получения статуса {task_id}: {e}")
         return None
 
-async def wait_for_task(task_id: str, timeout=180):
+async def wait_for_task(task_id: str, timeout=300):  # 5 минут
     start = asyncio.get_event_loop().time()
     while True:
         data = await get_task_status(task_id)
         if not data:
-            return None
-        # Если вернулась строка (ошибка API) – считаем, что задача не удалась
+            await asyncio.sleep(3)
+            if asyncio.get_event_loop().time() - start > timeout:
+                raise Exception("Таймаут: нет ответа от API")
+            continue
         if isinstance(data, str):
-            logger.error(f"Ошибка от API в виде строки: {data}")
-            return None
+            if "429" in data or "500" in data:
+                await asyncio.sleep(5)
+                continue
+            raise Exception(f"Ошибка API: {data[:200]}")
         status = data.get("status")
         if status == "COMPLETED":
             return data
         elif status == "FAILED":
-            logger.error(f"Задача {task_id} провалилась: {data.get('errorMessage')}")
-            return None
+            raise Exception(f"Задача провалилась: {data.get('errorMessage')}")
         await asyncio.sleep(2)
         if asyncio.get_event_loop().time() - start > timeout:
-            logger.error(f"Таймаут задачи {task_id}")
-            return None
+            raise Exception(f"Таймаут {timeout} секунд")
 
 async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
     messages = []
