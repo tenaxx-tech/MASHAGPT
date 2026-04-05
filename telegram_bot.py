@@ -25,7 +25,25 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+from PIL import Image
 
+async def compress_image(image_bytes: bytes, max_size: int = 1280, quality: int = 85) -> bytes:
+    """Сжимает изображение, уменьшая до max_size по большей стороне, сохраняя пропорции."""
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        # Конвертируем в RGB, если есть прозрачность
+        if img.mode in ('RGBA', 'LA', 'P'):
+            rgb = Image.new('RGB', img.size, (255, 255, 255))
+            rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+            img = rgb
+        # Масштабируем
+        ratio = max_size / max(img.size)
+        if ratio < 1:
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+        # Сохраняем в JPEG
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=quality, optimize=True)
+        return output.getvalue()
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 
@@ -361,7 +379,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
                 return ""
             return content
 
-async def masha_media_generate(model: str, payload: dict) -> bytes:
+async def masha_media_generate(model: str, payload: dict):
     task_id = await create_task(model, payload)
     if not task_id:
         raise Exception("Не удалось создать задачу")
@@ -373,23 +391,22 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     outputs = result.get("output", [])
     if not outputs:
         raise Exception("Нет output в ответе")
-    
-    # Определяем URL: словарь → ключ "url", строка → сама строка
+    # Получаем URL (может быть строкой или словарём)
     if isinstance(outputs[0], dict):
         media_url = outputs[0].get("url")
     elif isinstance(outputs[0], str):
         media_url = outputs[0]
     else:
         raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
-    
     if not media_url:
         raise Exception("Нет URL в ответе")
-    
+    # Скачиваем файл
     async with aiohttp.ClientSession() as session:
         async with session.get(media_url) as resp:
             if resp.status != 200:
                 raise Exception(f"Ошибка скачивания файла: {resp.status}")
-            return await resp.read()
+            file_bytes = await resp.read()
+    return file_bytes, media_url   # ← теперь возвращаем кортеж
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     # Специальная обработка для моделей, требующих двух изображений
@@ -729,14 +746,24 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         action = ChatAction.TYPING
 
-    stop_action = asyncio.Event()
+        stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, action, stop_action))
+    result_bytes = None
+    media_url = None
     try:
-        result_bytes = await masha_media_generate(model, payload)
+        result_bytes, media_url = await masha_media_generate(model, payload)
+    except Exception as e:
+        logger.exception("Ошибка при генерации медиа")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+        if price > 0:
+            add_balance(user_id, price)
+        await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
+        return MAIN_MENU
     finally:
         stop_action.set()
         await action_task
 
+    # ----- Успешная обработка -----
     if result_bytes:
         if category == "video":
             await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🎬 Результат")
@@ -744,8 +771,13 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
         elif category == "avatar":
             await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🤖 Аватар готов")
+        elif category == "image":
+            compressed = await compress_image(result_bytes)
+            await update.message.reply_photo(photo=io.BytesIO(compressed), caption="🖼 Результат (сжатое)")
+            await update.message.reply_text(f"📥 Скачать оригинал в высоком разрешении: {media_url}")
         else:
             await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+        
         if category == "image" and price == 0:
             increment_weekly_image_count(user_id)
         save_message(user_id, "user", f"{category} запрос: {text}")
