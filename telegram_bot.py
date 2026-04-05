@@ -11,6 +11,7 @@ from telegram.ext import (
     ContextTypes, ConversationHandler, PreCheckoutQueryHandler,
     CallbackQueryHandler
 )
+from telegram.constants import ChatAction
 
 from config import TELEGRAM_TOKEN, MASHA_API_KEY, MASHA_BASE_URL
 from database import (
@@ -258,6 +259,15 @@ async def send_long_message(update: Update, text: str):
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
 
+async def send_action_loop(update: Update, action: ChatAction, stop_event: asyncio.Event):
+    """Фоновая задача: каждые 4 секунды отправляет действие, пока stop_event не установлен."""
+    while not stop_event.is_set():
+        await update.message.reply_chat_action(action)
+        try:
+            await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            break
+
 async def create_task(model: str, payload: dict, retries=3):
     url = f"{MASHA_BASE_URL}/tasks/{model}"
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
@@ -285,9 +295,16 @@ async def get_task_status(task_id: str):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"Статус {resp.status}, тело: {text[:200]}")
+                    return text
                 data = await resp.json()
-                resp.raise_for_status()
                 return data
+    except aiohttp.ContentTypeError:
+        text = await resp.text()
+        logger.error(f"Ответ не JSON: {text[:200]}")
+        return text
     except Exception as e:
         logger.error(f"Ошибка получения статуса {task_id}: {e}")
         return None
@@ -298,6 +315,9 @@ async def wait_for_task(task_id: str, timeout=180):
         data = await get_task_status(task_id)
         if not data:
             return None
+        if isinstance(data, str):
+            logger.error(f"Ошибка от API в виде строки: {data}")
+            return None
         status = data.get("status")
         if status == "COMPLETED":
             return data
@@ -306,6 +326,7 @@ async def wait_for_task(task_id: str, timeout=180):
             return None
         await asyncio.sleep(2)
         if asyncio.get_event_loop().time() - start > timeout:
+            logger.error(f"Таймаут задачи {task_id}")
             return None
 
 async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
@@ -344,14 +365,23 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     result = await wait_for_task(task_id)
     if not result:
         raise Exception("Не удалось получить результат")
-    outputs = result.get("output", [])
+    if not isinstance(result, dict):
+        raise Exception(f"Неверный формат ответа: {result}")
+    outputs = result.get("output")
     if not outputs:
         raise Exception("Нет output в ответе")
-    media_url = outputs[0].get("url")
+    if not isinstance(outputs, list) or len(outputs) == 0:
+        raise Exception("output не список или пуст")
+    first_output = outputs[0]
+    if not isinstance(first_output, dict):
+        raise Exception(f"Первый элемент output не словарь: {first_output}")
+    media_url = first_output.get("url")
     if not media_url:
         raise Exception("Нет URL в ответе")
     async with aiohttp.ClientSession() as session:
         async with session.get(media_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Ошибка скачивания файла: {resp.status}")
             return await resp.read()
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
@@ -620,17 +650,19 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
+    stop_action = asyncio.Event()
+    action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
-        await update.message.reply_chat_action("typing")
         answer = await masha_text_generate(user_message, history, model)
-        if answer:
-            await send_long_message(update, answer)
-            save_message(user_id, "assistant", answer)
-        else:
-            await update.message.reply_text("❌ Пустой ответ от сервера.")
-    except Exception as e:
-        logger.exception("Ошибка генерации текста")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+    finally:
+        stop_action.set()
+        await action_task
+
+    if answer:
+        await send_long_message(update, answer)
+        save_message(user_id, "assistant", answer)
+    else:
+        await update.message.reply_text("❌ Пустой ответ от сервера.")
         if price > 0:
             add_balance(user_id, price)
     return DIALOG
@@ -676,29 +708,47 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Лимит 5 изображений в неделю исчерпан.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
+    # Определяем действие для индикации
+    if category == "text":
+        action = ChatAction.TYPING
+    elif category in ("image", "edit"):
+        action = ChatAction.UPLOAD_PHOTO
+    elif category == "video":
+        action = ChatAction.UPLOAD_VIDEO
+    elif category == "audio":
+        action = ChatAction.RECORD_AUDIO
+    elif category == "avatar":
+        action = ChatAction.UPLOAD_VIDEO
+    else:
+        action = ChatAction.TYPING
+
+    stop_action = asyncio.Event()
+    action_task = asyncio.create_task(send_action_loop(update, action, stop_action))
     try:
-        await update.message.reply_chat_action("upload_photo" if category != "audio" else "record_audio")
         result_bytes = await masha_media_generate(model, payload)
-        if result_bytes:
-            if category == "video":
-                await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🎬 Результат")
-            elif category == "audio":
-                await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
-            else:
-                await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
-            if category == "image" and price == 0:
-                increment_weekly_image_count(user_id)
-            save_message(user_id, "user", f"{category} запрос: {text}")
-            save_message(user_id, "assistant", "Контент сгенерирован")
+    finally:
+        stop_action.set()
+        await action_task
+
+    if result_bytes:
+        if category == "video":
+            await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🎬 Результат")
+        elif category == "audio":
+            await update.message.reply_audio(audio=io.BytesIO(result_bytes), title="Аудио", caption="🎵 Готово!")
+        elif category == "avatar":
+            await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🤖 Аватар готов")
         else:
-            await update.message.reply_text("❌ Не удалось получить результат.")
-    except Exception as e:
-        logger.exception(f"Ошибка генерации в категории {category}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+            await update.message.reply_photo(photo=io.BytesIO(result_bytes), caption="🖼 Результат")
+        if category == "image" and price == 0:
+            increment_weekly_image_count(user_id)
+        save_message(user_id, "user", f"{category} запрос: {text}")
+        save_message(user_id, "assistant", "Контент сгенерирован")
+    else:
+        await update.message.reply_text("❌ Не удалось получить результат.")
         if price > 0:
             add_balance(user_id, price)
-    finally:
-        await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
+
+    await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -757,9 +807,8 @@ async def main_async():
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    # Держим бота активным
-    while True:
-        await asyncio.sleep(3600)
+    # Бесконечное ожидание (заменили на вечный сон)
+    await asyncio.Event().wait()
 
 def main():
     asyncio.run(main_async())
