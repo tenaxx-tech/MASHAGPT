@@ -366,18 +366,23 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     result = await wait_for_task(task_id)
     if not result:
         raise Exception("Не удалось получить результат")
-    # Проверка, что result – словарь
     if not isinstance(result, dict):
         raise Exception(f"Неверный формат ответа: {result}")
     outputs = result.get("output", [])
     if not outputs:
         raise Exception("Нет output в ответе")
-    # Проверка, что первый элемент – словарь
-    if not isinstance(outputs[0], dict):
-        raise Exception(f"Первый элемент output не словарь: {outputs[0]}")
-    media_url = outputs[0].get("url")
+    
+    # Определяем URL: словарь → ключ "url", строка → сама строка
+    if isinstance(outputs[0], dict):
+        media_url = outputs[0].get("url")
+    elif isinstance(outputs[0], str):
+        media_url = outputs[0]
+    else:
+        raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
+    
     if not media_url:
         raise Exception("Нет URL в ответе")
+    
     async with aiohttp.ClientSession() as session:
         async with session.get(media_url) as resp:
             if resp.status != 200:
