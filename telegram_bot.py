@@ -3,7 +3,7 @@ import io
 import json
 import logging
 from typing import List, Tuple
-
+from decimal import Decimal
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -30,7 +30,7 @@ from PIL import Image
 
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2  # цена платного изображения после исчерпания бесплатного лимита
-
+PRICE_PER_IMAGE = 10
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
@@ -139,15 +139,11 @@ MODEL_INPUT_TYPE = {
 # ------------------- Клавиатуры -------------------
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("✏️ Генерация текста")],
-        [KeyboardButton("🖼 Генерация изображения")],
-        [KeyboardButton("🎬 Генерация видео")],
-        [KeyboardButton("✨ Обработка изображений")],
-        [KeyboardButton("🎵 Аудио (озвучка, эффекты)")],
-        [KeyboardButton("🤖 Аватар / анимация")],
-        [KeyboardButton("🧹 Сбросить диалог")],
-        [KeyboardButton("💰 Мой баланс")],
-        [KeyboardButton("⭐ Пополнить промты")],
+        [KeyboardButton("✏️ Генерация текста"), KeyboardButton("🖼 Генерация изображения")],
+        [KeyboardButton("🎬 Генерация видео"), KeyboardButton("✨ Обработка изображений")],
+        [KeyboardButton("🎵 Аудио (озвучка, эффекты)"), KeyboardButton("🤖 Аватар / анимация")],
+        [KeyboardButton("🧹 Сбросить диалог"), KeyboardButton("💰 Мой баланс")],
+        [KeyboardButton("⭐️ Пополнить промты")],  # ← Новая кнопка
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
@@ -524,15 +520,27 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
         chat_id = update.effective_chat.id
-    title = "Пополнение баланса"
-    description = "100 звёзд = 100 промтов"
-    payload = "topup_100"
+
+    title = "🖼️ Генерация изображения"
+    description = "Оплата за генерацию одного изображения с помощью нейросети."
+    payload = f"image_generation_{update.effective_user.id}_{int(asyncio.get_event_loop().time())}"
+    # Используем 'XTR' для Telegram Stars и пустой provider_token
     currency = "XTR"
-    prices = [{"label": "100 звёзд", "amount": 100}]
+    # Telegram принимает цену в минимальных единицах валюты. Для Telegram Stars 1 Star = 1 единица.
+    prices = [LabeledPrice(label="Генерация изображения", amount=PRICE_PER_IMAGE)]
+
     await context.bot.send_invoice(
-        chat_id, title, description, payload, "", currency, prices,
-        start_parameter="topup", need_name=False, need_phone_number=False,
-        need_email=False, need_shipping_address=False, is_flexible=False
+        chat_id=chat_id,
+        title=title,
+        description=description,
+        payload=payload,
+        provider_token="",  # Для Stars токен должен быть пустым[reference:3][reference:4]
+        currency=currency,
+        prices=prices,
+        need_name=False,
+        need_phone_number=False,
+        need_email=False,
+        is_flexible=False,
     )
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1189,17 +1197,21 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
 # ------------------- Обработчики платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
-    if query.invoice_payload == "topup_100":
+    # Проверяем, что payload нашего счёта корректен
+    if query.invoice_payload.startswith("image_generation_"):
         await query.answer(ok=True)
     else:
-        await query.answer(ok=False, error_message="Неизвестный товар")
+        await query.answer(ok=False, error_message="Что-то пошло не так...")
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    amount = update.message.successful_payment.total_amount
-    add_balance(user_id, amount)
+    successful_payment = update.message.successful_payment
+
+    # Зачисляем промты на баланс пользователя
+    add_balance(user_id, successful_payment.total_amount)
     await update.message.reply_text(
-        f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.",
+        f"✅ Баланс успешно пополнен на {successful_payment.total_amount} промтов!\n"
+        f"💰 Ваш новый баланс: {get_user_balance(user_id)} промтов.",
         reply_markup=get_main_keyboard()
     )
 
