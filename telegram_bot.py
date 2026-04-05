@@ -298,7 +298,7 @@ async def get_task_status(task_id: str):
                 if resp.status != 200:
                     text = await resp.text()
                     logger.error(f"Статус {resp.status}, тело: {text[:200]}")
-                    return text
+                    return text  # возвращаем строку с ошибкой
                 data = await resp.json()
                 return data
     except aiohttp.ContentTypeError:
@@ -315,6 +315,7 @@ async def wait_for_task(task_id: str, timeout=180):
         data = await get_task_status(task_id)
         if not data:
             return None
+        # Если вернулась строка (ошибка API) – считаем, что задача не удалась
         if isinstance(data, str):
             logger.error(f"Ошибка от API в виде строки: {data}")
             return None
@@ -365,17 +366,16 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     result = await wait_for_task(task_id)
     if not result:
         raise Exception("Не удалось получить результат")
+    # Проверка, что result – словарь
     if not isinstance(result, dict):
         raise Exception(f"Неверный формат ответа: {result}")
-    outputs = result.get("output")
+    outputs = result.get("output", [])
     if not outputs:
         raise Exception("Нет output в ответе")
-    if not isinstance(outputs, list) or len(outputs) == 0:
-        raise Exception("output не список или пуст")
-    first_output = outputs[0]
-    if not isinstance(first_output, dict):
-        raise Exception(f"Первый элемент output не словарь: {first_output}")
-    media_url = first_output.get("url")
+    # Проверка, что первый элемент – словарь
+    if not isinstance(outputs[0], dict):
+        raise Exception(f"Первый элемент output не словарь: {outputs[0]}")
+    media_url = outputs[0].get("url")
     if not media_url:
         raise Exception("Нет URL в ответе")
     async with aiohttp.ClientSession() as session:
