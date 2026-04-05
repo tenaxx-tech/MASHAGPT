@@ -31,86 +31,32 @@ MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIAL
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
-    # Текст – бесплатно
-    "gpt-5-nano": 0,
-    "gpt-5-mini": 0,
-    "gpt-4o-mini": 0,
-    "gpt-4.1-nano": 0,
-    "deepseek-chat": 0,
-    "deepseek-reasoner": 0,
-    "grok-4-1-fast-reasoning": 0,
-    "grok-4-1-fast-non-reasoning": 0,
-    "grok-3-mini": 0,
-    "gemini-2.0-flash": 0,
-    "gemini-2.0-flash-lite": 0,
-    "gemini-2.5-flash-lite": 0,
-    # Платные текстовые
-    "gpt-5.4": 15,
-    "gpt-5.1": 10,
-    "gpt-5": 10,
-    "gpt-4.1": 8,
-    "gpt-4o": 10,
-    "o3-mini": 4.4,
-    "o3": 40,
-    "o1": 60,
-    "claude-haiku-4-5": 5,
-    "claude-sonnet-4-5": 15,
-    "claude-opus-4-5": 25,
-    "gemini-3-flash": 3,
-    "gemini-2.5-pro": 10,
-    "gemini-3-pro": 16,
-    "gemini-3-pro-image": 12,
-    # Изображения – все бесплатно (лимит 5/неделя)
-    "z-image": 0,
-    "grok-imagine-text-to-image": 0,
-    "codeplugtech-face-swap": 0,
-    "cdlingram-face-swap": 0,
-    "recraft-crisp-upscale": 0,
-    "recraft-remove-background": 0,
-    "topaz-image-upscale": 0,
-    "flux-2": 0,
-    "qwen-edit-multiangle": 0,
-    "nano-banana-2": 0,
-    "nano-banana-pro": 0,
-    "midjourney": 0,
-    "gpt-image-1-5-text-to-image": 0,
-    "gpt-image-1-5-image-to-image": 0,
-    "ideogram-v3-reframe": 0,
-    # Видео – платные
-    "grok-imagine-text-to-video": 1,
-    "wan-2-6-text-to-video": 3,
-    "wan-2-5-text-to-video": 3,
-    "wan-2-6-image-to-video": 3,
-    "wan-2-6-video-to-video": 3,
-    "wan-2-5-image-to-video": 3,
-    "sora-2-text-to-video": 3,
-    "sora-2-image-to-video": 3,
-    "veo-3-1": 5,
-    "kling-2-6-text-to-video": 6,
-    "kling-v2-5-turbo-pro": 6,
-    "kling-2-6-image-to-video": 6,
-    "kling-v2-5-turbo-image-to-video-pro": 5,
-    "sora-2-pro-text-to-video": 5,
-    "sora-2-pro-image-to-video": 5,
-    "sora-2-pro-storyboard": 7,
-    "hailuo-2-3": 4,
-    "minimax-video-01-director": 4,
-    "seedance-v1-pro-fast": 30,
-    "kling-2-6-motion-control": 6,
-    # Аудио
-    "elevenlabs-tts-multilingual-v2": 0,
-    "elevenlabs-tts-turbo-2-5": 0,
-    "elevenlabs-text-to-dialogue-v3": 0,
-    "elevenlabs-sound-effect-v2": 5,
-    # Аватар и анимация – платные
-    "kling-v1-avatar-pro": 16,
-    "kling-v1-avatar-standard": 8,
-    "infinitalk-from-audio": 1.1,
-    "wan-2-2-animate-move": 0.75,
-    "wan-2-2-animate-replace": 0.75,
+    "gpt-5-nano": 0, "gpt-5-mini": 0, "gpt-4o-mini": 0, "gpt-4.1-nano": 0,
+    "deepseek-chat": 0, "deepseek-reasoner": 0,
+    "grok-4-1-fast-reasoning": 0, "grok-4-1-fast-non-reasoning": 0, "grok-3-mini": 0,
+    "gemini-2.0-flash": 0, "gemini-2.0-flash-lite": 0, "gemini-2.5-flash-lite": 0,
+    "gpt-5.4": 15, "gpt-5.1": 10, "gpt-5": 10, "gpt-4.1": 8, "gpt-4o": 10,
+    "o3-mini": 4.4, "o3": 40, "o1": 60,
+    "claude-haiku-4-5": 5, "claude-sonnet-4-5": 15, "claude-opus-4-5": 25,
+    "gemini-3-flash": 3, "gemini-2.5-pro": 10, "gemini-3-pro": 16, "gemini-3-pro-image": 12,
+    "z-image": 0, "grok-imagine-text-to-image": 0, "codeplugtech-face-swap": 0,
+    "cdlingram-face-swap": 0, "recraft-crisp-upscale": 0, "recraft-remove-background": 0,
+    "topaz-image-upscale": 0, "flux-2": 0, "qwen-edit-multiangle": 0, "nano-banana-2": 0,
+    "nano-banana-pro": 0, "midjourney": 0, "gpt-image-1-5-text-to-image": 0,
+    "gpt-image-1-5-image-to-image": 0, "ideogram-v3-reframe": 0,
+    "grok-imagine-text-to-video": 1, "wan-2-6-text-to-video": 3, "wan-2-5-text-to-video": 3,
+    "wan-2-6-image-to-video": 3, "wan-2-6-video-to-video": 3, "wan-2-5-image-to-video": 3,
+    "sora-2-text-to-video": 3, "sora-2-image-to-video": 3, "veo-3-1": 5,
+    "kling-2-6-text-to-video": 6, "kling-v2-5-turbo-pro": 6, "kling-2-6-image-to-video": 6,
+    "kling-v2-5-turbo-image-to-video-pro": 5, "sora-2-pro-text-to-video": 5,
+    "sora-2-pro-image-to-video": 5, "sora-2-pro-storyboard": 7, "hailuo-2-3": 4,
+    "minimax-video-01-director": 4, "seedance-v1-pro-fast": 30, "kling-2-6-motion-control": 6,
+    "elevenlabs-tts-multilingual-v2": 0, "elevenlabs-tts-turbo-2-5": 0,
+    "elevenlabs-text-to-dialogue-v3": 0, "elevenlabs-sound-effect-v2": 5,
+    "kling-v1-avatar-pro": 16, "kling-v1-avatar-standard": 8, "infinitalk-from-audio": 1.1,
+    "wan-2-2-animate-move": 0.75, "wan-2-2-animate-replace": 0.75,
 }
 
-# ------------------- Клавиатуры (сокращены для краткости, но полные) -------------------
 # ------------------- Клавиатуры -------------------
 def get_main_keyboard():
     keyboard = [
@@ -128,33 +74,19 @@ def get_main_keyboard():
 
 def get_text_models_keyboard():
     models = [
-        ("gpt-4o-mini", "GPT-4o mini", 0),
-        ("gpt-5-mini", "GPT-5 mini", 0),
-        ("gpt-5-nano", "GPT-5 nano", 0),
-        ("gpt-4.1-nano", "GPT-4.1 nano", 0),
-        ("deepseek-chat", "DeepSeek Chat", 0),
-        ("deepseek-reasoner", "DeepSeek Reasoner", 0),
+        ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
+        ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
+        ("deepseek-chat", "DeepSeek Chat", 0), ("deepseek-reasoner", "DeepSeek Reasoner", 0),
         ("grok-4-1-fast-reasoning", "Grok 4.1 Fast (reasoning)", 0),
-        ("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast", 0),
-        ("grok-3-mini", "Grok 3 mini", 0),
-        ("gemini-2.0-flash", "Gemini 2.0 Flash", 0),
-        ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
+        ("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast", 0), ("grok-3-mini", "Grok 3 mini", 0),
+        ("gemini-2.0-flash", "Gemini 2.0 Flash", 0), ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
         ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0),
-        ("gpt-5.4", "GPT-5.4", 15),
-        ("gpt-5.1", "GPT-5.1", 10),
-        ("gpt-5", "GPT-5", 10),
-        ("gpt-4.1", "GPT-4.1", 8),
-        ("gpt-4o", "GPT-4o", 10),
-        ("o3-mini", "O3-mini", 4.4),
-        ("o3", "O3", 40),
-        ("o1", "O1", 60),
-        ("claude-haiku-4-5", "Claude Haiku 4.5", 5),
-        ("claude-sonnet-4-5", "Claude Sonnet 4.5", 15),
-        ("claude-opus-4-5", "Claude Opus 4.5", 25),
-        ("gemini-3-flash", "Gemini 3 Flash", 3),
-        ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
-        ("gemini-3-pro", "Gemini 3 Pro", 16),
-        ("gemini-3-pro-image", "Gemini 3 Pro Image", 12),
+        ("gpt-5.4", "GPT-5.4", 15), ("gpt-5.1", "GPT-5.1", 10), ("gpt-5", "GPT-5", 10),
+        ("gpt-4.1", "GPT-4.1", 8), ("gpt-4o", "GPT-4o", 10), ("o3-mini", "O3-mini", 4.4),
+        ("o3", "O3", 40), ("o1", "O1", 60), ("claude-haiku-4-5", "Claude Haiku 4.5", 5),
+        ("claude-sonnet-4-5", "Claude Sonnet 4.5", 15), ("claude-opus-4-5", "Claude Opus 4.5", 25),
+        ("gemini-3-flash", "Gemini 3 Flash", 3), ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
+        ("gemini-3-pro", "Gemini 3 Pro", 16), ("gemini-3-pro-image", "Gemini 3 Pro Image", 12)
     ]
     models.sort(key=lambda x: x[2])
     keyboard = []
@@ -166,21 +98,17 @@ def get_text_models_keyboard():
 
 def get_image_models_keyboard():
     models = [
-        ("z-image", "Z-Image", 0),
-        ("grok-imagine-text-to-image", "Grok Imagine", 0),
+        ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
         ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
         ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
         ("recraft-remove-background", "Recraft Remove Background", 0),
-        ("topaz-image-upscale", "Topaz Image Upscale", 0),
-        ("flux-2", "Flux 2", 0),
-        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0),
-        ("nano-banana-2", "Nano Banana 2", 0),
-        ("nano-banana-pro", "Nano Banana Pro", 0),
-        ("midjourney", "Midjourney", 0),
+        ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
+        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0), ("nano-banana-2", "Nano Banana 2", 0),
+        ("nano-banana-pro", "Nano Banana Pro", 0), ("midjourney", "Midjourney", 0),
         ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0),
         ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
-        ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0),
+        ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
     ]
     keyboard = []
     for model_id, label, price in models:
@@ -209,7 +137,7 @@ def get_video_models_keyboard():
         ("hailuo-2-3", "Hailuo 2.3", 4),
         ("minimax-video-01-director", "Minimax Video-01 Director", 4),
         ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
-        ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6),
+        ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6)
     ]
     models.sort(key=lambda x: x[2])
     keyboard = []
@@ -225,7 +153,7 @@ def get_edit_models_keyboard():
         ("topaz-image-upscale", "Topaz Image Upscale", 0),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
         ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
-        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0),
+        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0)
     ]
     keyboard = []
     for model_id, label, price in models:
@@ -238,7 +166,7 @@ def get_audio_models_keyboard():
         ("elevenlabs-tts-multilingual-v2", "Озвучка (Multilingual)", 0),
         ("elevenlabs-tts-turbo-2-5", "Быстрая озвучка (Turbo)", 0),
         ("elevenlabs-text-to-dialogue-v3", "Диалоги (Dialogue V3)", 0),
-        ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5),
+        ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5)
     ]
     models.sort(key=lambda x: x[2])
     keyboard = []
@@ -256,7 +184,7 @@ def get_avatar_models_keyboard():
         ("kling-v1-avatar-pro", "Kling Avatar Pro", 16),
         ("infinitalk-from-audio", "Infinitalk (говорящая голова)", 1.1),
         ("wan-2-2-animate-move", "Wan Animate Move", 0.75),
-        ("wan-2-2-animate-replace", "Wan Animate Replace", 0.75),
+        ("wan-2-2-animate-replace", "Wan Animate Replace", 0.75)
     ]
     models.sort(key=lambda x: x[2])
     keyboard = []
@@ -268,8 +196,7 @@ def get_avatar_models_keyboard():
 def get_cancel_keyboard():
     return ReplyKeyboardMarkup(
         [[KeyboardButton("🔙 Главное меню")]],
-        resize_keyboard=True,
-        one_time_keyboard=True
+        resize_keyboard=True, one_time_keyboard=True
     )
 
 # ------------------- Вспомогательные функции -------------------
@@ -288,14 +215,13 @@ async def create_task(model: str, payload: dict, retries=3):
                 async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     if resp.status == 429:
                         wait = 2 ** attempt
-                        logger.warning(f"429 Too Many Requests, повтор через {wait} сек")
                         await asyncio.sleep(wait)
                         continue
                     resp.raise_for_status()
                     data = await resp.json()
                     return data.get("id")
         except Exception as e:
-            logger.error(f"Ошибка создания задачи {model} (попытка {attempt+1}): {e}")
+            logger.error(f"Ошибка создания задачи {model}: {e}")
             if attempt == retries - 1:
                 return None
             await asyncio.sleep(2)
@@ -307,19 +233,9 @@ async def get_task_status(task_id: str):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                try:
-                    data = await resp.json()
-                except aiohttp.ContentTypeError:
-                    text = await resp.text()
-                    logger.error(f"Ответ не JSON: {text[:200]}")
-                    return text
-                resp.raise_for_status()
                 data = await resp.json()
+                resp.raise_for_status()
                 return data
-    except aiohttp.ContentTypeError:
-        text = await resp.text()
-        logger.error(f"Ответ не JSON: {text[:200]}")
-        return text
     except Exception as e:
         logger.error(f"Ошибка получения статуса {task_id}: {e}")
         return None
@@ -330,10 +246,6 @@ async def wait_for_task(task_id: str, timeout=180):
         data = await get_task_status(task_id)
         if not data:
             return None
-        if isinstance(data, str):
-            logger.error(f"Строка вместо JSON: {data[:200]}")
-            # Это текст ошибки от API (например, "429 Too Many Requests")
-            return data
         status = data.get("status")
         if status == "COMPLETED":
             return data
@@ -342,10 +254,8 @@ async def wait_for_task(task_id: str, timeout=180):
             return None
         await asyncio.sleep(2)
         if asyncio.get_event_loop().time() - start > timeout:
-            logger.error(f"Таймаут задачи {task_id}")
             return None
 
-# ------------------- Masha API вызовы -------------------
 async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
     messages = []
     for role, content in history[-5:]:
@@ -360,26 +270,18 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
         "max_completion_tokens": 1024,
         "temperature": 1.0
     }
-
-    logger.info(f"Отправка запроса к MashaGPT: модель={model}, длина промпта={len(prompt)}")
-
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-            logger.info(f"Получен ответ от MashaGPT, статус={resp.status}")
             if resp.status != 200:
                 error_text = await resp.text()
-                logger.error(f"Masha API error {resp.status}: {error_text}")
-                raise Exception(f"Masha error: {resp.status}")
+                raise Exception(f"Masha error {resp.status}: {error_text}")
             data = await resp.json()
-            logger.info(f"Полный JSON ответ (первые 500): {json.dumps(data, ensure_ascii=False)[:500]}")
             content = None
             if "choices" in data and len(data["choices"]) > 0:
-                message = data["choices"][0].get("message", {})
-                content = message.get("content")
+                content = data["choices"][0].get("message", {}).get("content")
             if not content:
                 content = data.get("result") or data.get("output")
             if not content:
-                logger.warning("Не удалось извлечь content")
                 return ""
             return content
 
@@ -390,9 +292,6 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
     result = await wait_for_task(task_id)
     if not result:
         raise Exception("Не удалось получить результат")
-    if isinstance(result, str):
-        # Ошибка в виде строки (например, "429 Too Many Requests")
-        raise Exception(f"Ошибка API: {result[:200]}")
     outputs = result.get("output", [])
     if not outputs:
         raise Exception("Нет output в ответе")
@@ -404,8 +303,19 @@ async def masha_media_generate(model: str, payload: dict) -> bytes:
             return await resp.read()
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
+    # Обработка face-swap (два URL)
+    if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
+        if image_url and " " in image_url:
+            urls = image_url.split()
+            return {"inputImage": urls[0], "swapImage": urls[1]}
+        return None
+    # Обработка qwen
+    if model == "qwen-edit-multiangle":
+        if not prompt or not image_url:
+            return None
+        return {"prompt": prompt, "image": image_url}
+    # Стандартные payloads
     payloads = {
-        # Изображения
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
@@ -417,14 +327,7 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "gpt-image-1-5-image-to-image": {"prompt": prompt, "inputUrls": [image_url]} if image_url else None,
         "ideogram-v3-reframe": {"imageUrl": image_url, "imageSize": "square", "renderingSpeed": "BALANCED"} if image_url else None,
         "recraft-crisp-upscale": {"imageUrl": image_url} if image_url else None,
-        "recraft-remove-background": {"imageUrl": image_url} if image_url else None,
         "topaz-image-upscale": {"imageUrl": image_url, "upscaleFactor": "2"} if image_url else None,
-        "codeplugtech-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
-                                   "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
-        "cdlingram-face-swap": {"inputImage": image_url.split()[0] if image_url and " " in image_url else None,
-                                "swapImage": image_url.split()[1] if image_url and " " in image_url else None},
-        "qwen-edit-multiangle": {"prompt": prompt, "image": image_url},
-        # Видео
         "grok-imagine-text-to-video": {"prompt": prompt, "aspectRatio": "3:2", "mode": "normal"},
         "wan-2-6-text-to-video": {"prompt": prompt, "duration": "5", "resolution": "1080p"},
         "wan-2-5-text-to-video": {"prompt": prompt, "duration": "5", "aspectRatio": "16:9", "resolution": "1080p"},
@@ -445,12 +348,10 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "minimax-video-01-director": {"prompt": prompt, "promptOptimizer": True},
         "seedance-v1-pro-fast": {"prompt": prompt, "imageUrl": image_url, "resolution": "720p", "duration": "5"} if image_url else None,
         "kling-2-6-motion-control": {"prompt": prompt, "imageUrls": [image_url] if image_url else None, "characterOrientation": "image", "duration": 5},
-        # Аудио
         "elevenlabs-tts-multilingual-v2": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
         "elevenlabs-tts-turbo-2-5": {"text": prompt, "voice": "Rachel", "stability": 0.5, "similarityBoost": 0.75, "speed": 1.0, "languageCode": "ru"},
         "elevenlabs-text-to-dialogue-v3": {"dialogue": [{"text": prompt, "voice": "Rachel"}], "stability": 0.5, "languageCode": "ru"},
         "elevenlabs-sound-effect-v2": {"text": prompt, "durationSeconds": 5, "promptInfluence": 0.5},
-        # Аватар и анимация
         "kling-v1-avatar-pro": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
         "kling-v1-avatar-standard": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Talking head animation"},
         "infinitalk-from-audio": {"imageUrl": image_url, "audioUrl": prompt, "prompt": "Natural head movement and lip sync"},
@@ -459,7 +360,6 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
     }
     return payloads.get(model, None)
 
-# ------------------- Обработчики (основные) -------------------
 # ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
@@ -489,10 +389,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
-    # Инлайн-кнопка для пополнения
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]
-    ])
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]])
     await update.message.reply_text(
         f"💰 Ваш баланс: {bal} промтов\n🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе",
         reply_markup=keyboard
@@ -560,35 +457,59 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    models = []
+    # Списки моделей для каждой категории (без дублей)
     if category == "text":
         models = [
             ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
             ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
-            ("deepseek-chat", "DeepSeek Chat", 0), ("gpt-5.4", "GPT-5.4", 15)
-            ("gpt-4o-mini", "GPT-4o mini", 0),
-            ("gpt-5-mini", "GPT-5 mini", 0),
-            ("gpt-5-nano", "GPT-5 nano", 0),
-            ("gpt-4.1-nano", "GPT-4.1 nano", 0),
-            ("deepseek-chat", "DeepSeek Chat", 0),
-            ("gpt-5.4", "GPT-5.4", 15)
+            ("deepseek-chat", "DeepSeek Chat", 0), ("deepseek-reasoner", "DeepSeek Reasoner", 0),
+            ("grok-4-1-fast-reasoning", "Grok 4.1 Fast (reasoning)", 0),
+            ("grok-4-1-fast-non-reasoning", "Grok 4.1 Fast", 0), ("grok-3-mini", "Grok 3 mini", 0),
+            ("gemini-2.0-flash", "Gemini 2.0 Flash", 0), ("gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", 0),
+            ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 0),
+            ("gpt-5.4", "GPT-5.4", 15), ("gpt-5.1", "GPT-5.1", 10), ("gpt-5", "GPT-5", 10),
+            ("gpt-4.1", "GPT-4.1", 8), ("gpt-4o", "GPT-4o", 10), ("o3-mini", "O3-mini", 4.4),
+            ("o3", "O3", 40), ("o1", "O1", 60), ("claude-haiku-4-5", "Claude Haiku 4.5", 5),
+            ("claude-sonnet-4-5", "Claude Sonnet 4.5", 15), ("claude-opus-4-5", "Claude Opus 4.5", 25),
+            ("gemini-3-flash", "Gemini 3 Flash", 3), ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
+            ("gemini-3-pro", "Gemini 3 Pro", 16), ("gemini-3-pro-image", "Gemini 3 Pro Image", 12)
         ]
     elif category == "image":
         models = [
-            ("nano-banana-2", "Nano Banana 2", 0), ("midjourney", "Midjourney", 0),
-            ("flux-2", "Flux 2", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
-            ("nano-banana-2", "Nano Banana 2", 0),
-            ("midjourney", "Midjourney", 0),
-            ("flux-2", "Flux 2", 0),
-            ("grok-imagine-text-to-image", "Grok Imagine", 0),
-            ("z-image", "Z-Image", 0)
+            ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
+            ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
+            ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
+            ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
+            ("recraft-remove-background", "Recraft Remove Background", 0),
+            ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
+            ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0), ("nano-banana-2", "Nano Banana 2", 0),
+            ("nano-banana-pro", "Nano Banana Pro", 0), ("midjourney", "Midjourney", 0),
+            ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0),
+            ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
+            ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
         ]
     elif category == "video":
         models = [
             ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
-            ("sora-2-text-to-video", "Sora 2", 3), ("kling-2-6-text-to-video", "Kling 2.6", 6)
-            ("sora-2-text-to-video", "Sora 2", 3),
-            ("kling-2-6-text-to-video", "Kling 2.6", 6)
+            ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
+            ("wan-2-5-text-to-video", "Wan 2.5 (txt2vid)", 3),
+            ("wan-2-6-image-to-video", "Wan 2.6 (img2vid)", 3),
+            ("wan-2-6-video-to-video", "Wan 2.6 (vid2vid)", 3),
+            ("wan-2-5-image-to-video", "Wan 2.5 (img2vid)", 3),
+            ("sora-2-text-to-video", "Sora 2 (txt2vid)", 3),
+            ("sora-2-image-to-video", "Sora 2 (img2vid)", 3),
+            ("veo-3-1", "Google Veo 3.1", 5),
+            ("kling-2-6-text-to-video", "Kling 2.6 (txt2vid)", 6),
+            ("kling-v2-5-turbo-pro", "Kling V2.5 Turbo Pro", 6),
+            ("kling-2-6-image-to-video", "Kling 2.6 (img2vid)", 6),
+            ("kling-v2-5-turbo-image-to-video-pro", "Kling V2.5 Turbo I2V Pro", 5),
+            ("sora-2-pro-text-to-video", "Sora 2 Pro (txt2vid)", 5),
+            ("sora-2-pro-image-to-video", "Sora 2 Pro (img2vid)", 5),
+            ("sora-2-pro-storyboard", "Sora 2 Pro Storyboard", 7),
+            ("hailuo-2-3", "Hailuo 2.3", 4),
+            ("minimax-video-01-director", "Minimax Video-01 Director", 4),
+            ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
+            ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6)
         ]
     else:
         models = []
@@ -681,7 +602,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     logger.info(f"Генерация {category} с моделью {model}, payload={payload}")
 
-    # Проверка баланса для платных моделей
     if price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -690,7 +610,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
             return MAIN_MENU
 
-    # Лимит бесплатных изображений
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -722,7 +641,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -732,9 +650,7 @@ async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    payment = update.message.successful_payment
-    amount = payment.total_amount  # в звёздах, например 100
-    amount = payment.total_amount  # в звёздах
+    amount = update.message.successful_payment.total_amount
     add_balance(user_id, amount)
     await update.message.reply_text(
         f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.",
@@ -747,30 +663,25 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Health check и запуск -------------------
+# ------------------- Вебхук и запуск -------------------
+async def webhook_handler(request):
+    data = await request.json()
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
+    return web.Response(text="OK")
+
 async def health_check(request):
     return web.Response(text="OK")
 
-async def start_http_server():
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
-    await site.start()
-    logger.info("Health‑check сервер запущен на порту 8080")
-    while True:
-        await asyncio.sleep(3600)
-
 async def main_async():
-    asyncio.create_task(start_http_server())
-
+    global app
+    init_db()
     if not TELEGRAM_TOKEN or not MASHA_API_KEY:
         logger.error("Не заданы TELEGRAM_TOKEN или MASHA_API_KEY")
         return
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -793,12 +704,28 @@ async def main_async():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
-    logger.info("Бот запущен")
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
+
+    # Устанавливаем вебхук на адрес, который ожидает bothost.ru
+    webhook_url = "https://nsk7.bothost.ru/api/bots/update"
+    await app.bot.set_webhook(webhook_url)
+    logger.info(f"Вебхук установлен на {webhook_url}")
+
+    # Создаём aiohttp сервер для приёма вебхуков
+    aiohttp_app = web.Application()
+    aiohttp_app.router.add_post('/api/bots/update', webhook_handler)
+    aiohttp_app.router.add_get('/', health_check)
+    aiohttp_app.router.add_get('/health', health_check)
+
+    runner = web.AppRunner(aiohttp_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    logger.info("Сервер запущен на порту 8080")
+
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(3600)
 
 def main():
     asyncio.run(main_async())
