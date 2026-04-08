@@ -334,27 +334,26 @@ async def get_task_status(task_id: str):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                text = await resp.text()
                 if resp.status != 200:
-                    text = await resp.text()
                     logger.error(f"Статус {resp.status}, тело: {text[:200]}")
                     return text
-                data = await resp.json()
-                return data
-    except aiohttp.ContentTypeError:
-        text = await resp.text()
-        logger.error(f"Ответ не JSON: {text[:200]}")
-        return text
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    logger.error(f"Ответ не JSON: {text[:200]}")
+                    return text
     except Exception as e:
         logger.error(f"Ошибка получения статуса {task_id}: {e}")
         return None
 
 async def wait_for_task(task_id: str, timeout=300):
-    start = asyncio.get_event_loop().time()
+    start = asyncio.get_running_loop().time()
     while True:
         data = await get_task_status(task_id)
         if not data:
             await asyncio.sleep(3)
-            if asyncio.get_event_loop().time() - start > timeout:
+            if asyncio.get_running_loop().time() - start > timeout:
                 raise Exception("Таймаут: нет ответа от API")
             continue
         if isinstance(data, str):
@@ -368,7 +367,7 @@ async def wait_for_task(task_id: str, timeout=300):
         elif status == "FAILED":
             raise Exception(f"Задача провалилась: {data.get('errorMessage')}")
         await asyncio.sleep(2)
-        if asyncio.get_event_loop().time() - start > timeout:
+        if asyncio.get_running_loop().time() - start > timeout:
             raise Exception(f"Таймаут {timeout} секунд")
 
 async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
@@ -800,7 +799,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
-            # Бесплатный лимит исчерпан – предлагаем платную генерацию
             balance = get_user_balance(user_id)
             if balance >= PAID_IMAGE_PRICE:
                 if not deduct_balance(user_id, PAID_IMAGE_PRICE):
@@ -925,27 +923,51 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
     model = context.user_data['selected_model']
     price = context.user_data['model_price']
     user_id = update.effective_user.id
+    category = context.user_data.get('selected_category', 'image')
 
-    # Для face-swap цена всегда 0, но если лимит исчерпан, нужно платить? По условию задачи – бесплатно с лимитом 5/неделя.
-    # Для упрощения оставим как было – они тоже изображения, поэтому подпадают под ту же логику лимита.
-    # В handle_media_input уже есть логика, но здесь отдельный обработчик – поэтому нужно тоже применить лимит.
-    # Но чтобы не усложнять, предположим, что face-swap считается изображением и обрабатывается в handle_media_input.
-    # Однако в этом обработчике у нас нет лимита. Лучше перенаправить логику face-swap на общий механизм, но для простоты оставим как есть.
-    # Можно добавить проверку лимита и платности здесь аналогично.
-
-    if price > 0 and get_user_balance(user_id) < price:
-        await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
-        return MAIN_MENU
-    if price > 0 and not deduct_balance(user_id, price):
-        await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
-        return MAIN_MENU
+    # Проверка лимита для бесплатных изображений (price == 0)
+    if price == 0:
+        used = get_weekly_image_count(user_id)
+        if used >= 5:
+            balance = get_user_balance(user_id)
+            if balance >= PAID_IMAGE_PRICE:
+                if not deduct_balance(user_id, PAID_IMAGE_PRICE):
+                    await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
+                    return MAIN_MENU
+                await update.message.reply_text(
+                    f"⚠️ Бесплатный лимит (5/неделю) исчерпан.\n"
+                    f"Списано {PAID_IMAGE_PRICE} промтов за это изображение.\n"
+                    f"Остаток на балансе: {get_user_balance(user_id)} промтов.\n"
+                    f"Продолжаем генерацию...",
+                    reply_markup=get_cancel_keyboard()
+                )
+                paid_image = True
+            else:
+                await update.message.reply_text(
+                    f"❌ Бесплатный лимит (5/неделю) исчерпан.\n"
+                    f"Недостаточно промтов для платной генерации. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.\n"
+                    f"Пополните баланс в личном кабинете.",
+                    reply_markup=get_main_keyboard()
+                )
+                return MAIN_MENU
+        else:
+            paid_image = False
+    else:
+        # Платная модель – обычная проверка баланса
+        if get_user_balance(user_id) < price:
+            await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+        if not deduct_balance(user_id, price):
+            await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+        paid_image = False  # для платных моделей не увеличиваем бесплатный счётчик
 
     image_url = f"{target_url} {swap_url}"
     payload = build_payload(model, prompt=None, image_url=image_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для замены лица.", reply_markup=get_main_keyboard())
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
         return MAIN_MENU
 
     stop_action = asyncio.Event()
@@ -955,8 +977,8 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.exception("Ошибка face-swap")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
         return MAIN_MENU
     finally:
         stop_action.set()
@@ -966,14 +988,15 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
         compressed = await compress_image(result_bytes)
         await update.message.reply_photo(photo=io.BytesIO(compressed), caption="🖼 Результат замены лица (сжатое)")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        if price == 0 and context.user_data.get('selected_category') == "image":
+        # Увеличиваем счётчик только для бесплатных генераций
+        if price == 0 and not paid_image:
             increment_weekly_image_count(user_id)
         save_message(user_id, "user", f"face-swap: target={target_url}, swap={swap_url}")
         save_message(user_id, "assistant", "Изображение сгенерировано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
 
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
@@ -1006,19 +1029,49 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     model = context.user_data['selected_model']
     price = context.user_data['model_price']
     user_id = update.effective_user.id
+    category = context.user_data.get('selected_category', 'image')
 
-    if price > 0 and get_user_balance(user_id) < price:
-        await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
-        return MAIN_MENU
-    if price > 0 and not deduct_balance(user_id, price):
-        await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
-        return MAIN_MENU
+    # Проверка лимита для бесплатных моделей редактирования
+    if price == 0:
+        used = get_weekly_image_count(user_id)
+        if used >= 5:
+            balance = get_user_balance(user_id)
+            if balance >= PAID_IMAGE_PRICE:
+                if not deduct_balance(user_id, PAID_IMAGE_PRICE):
+                    await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
+                    return MAIN_MENU
+                await update.message.reply_text(
+                    f"⚠️ Бесплатный лимит (5/неделю) исчерпан.\n"
+                    f"Списано {PAID_IMAGE_PRICE} промтов за это изображение.\n"
+                    f"Остаток на балансе: {get_user_balance(user_id)} промтов.\n"
+                    f"Продолжаем генерацию...",
+                    reply_markup=get_cancel_keyboard()
+                )
+                paid_image = True
+            else:
+                await update.message.reply_text(
+                    f"❌ Бесплатный лимит (5/неделю) исчерпан.\n"
+                    f"Недостаточно промтов для платной генерации. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.\n"
+                    f"Пополните баланс в личном кабинете.",
+                    reply_markup=get_main_keyboard()
+                )
+                return MAIN_MENU
+        else:
+            paid_image = False
+    else:
+        if get_user_balance(user_id) < price:
+            await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+        if not deduct_balance(user_id, price):
+            await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+        paid_image = False
 
     payload = build_payload(model, prompt=prompt_text, image_url=image_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос.", reply_markup=get_main_keyboard())
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
         return MAIN_MENU
 
     stop_action = asyncio.Event()
@@ -1028,8 +1081,8 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.exception("Ошибка редактирования изображения")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
         return MAIN_MENU
     finally:
         stop_action.set()
@@ -1039,14 +1092,14 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
         compressed = await compress_image(result_bytes)
         await update.message.reply_photo(photo=io.BytesIO(compressed), caption="🖼 Результат редактирования (сжатое)")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        if price == 0 and context.user_data.get('selected_category') == "image":
+        if price == 0 and not paid_image:
             increment_weekly_image_count(user_id)
         save_message(user_id, "user", f"edit image: {prompt_text}")
         save_message(user_id, "assistant", "Изображение отредактировано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
-        if price > 0:
-            add_balance(user_id, price)
+        if price > 0 or (price == 0 and paid_image):
+            add_balance(user_id, PAID_IMAGE_PRICE if paid_image else price)
 
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
