@@ -171,6 +171,7 @@ def get_text_models_keyboard():
     keyboard = []
     for model_id, label, price in models:
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
+        logger.info(f"Сравнение: text='{text}', btn_text='{btn_text}'")
         keyboard.append([KeyboardButton(btn_text)])
     keyboard.append([KeyboardButton("🔙 Главное меню")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
