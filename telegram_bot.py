@@ -651,7 +651,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     for model_id, label, price in models:
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
-        if text == btn_text:
+         if text.strip() == btn_text.strip():
             context.user_data['selected_model'] = model_id
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = category
@@ -786,10 +786,23 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     category = context.user_data.get('media_category')
     text = update.message.text
 
+    # --- НОВАЯ ПРОВЕРКА ---
+    # Если текст похож на кнопку выбора модели, игнорируем и просим ввести промпт
+    if text.endswith("(бесплатно)") or ("(" in text and "промтов)" in text):
+        await update.message.reply_text(
+            "📝 Пожалуйста, введите текстовый запрос для генерации.\n"
+            "Пример: «кот в космосе» или «реалистичный пейзаж»",
+            reply_markup=get_cancel_keyboard()
+        )
+        return AWAIT_PROMPT
+    # --- КОНЕЦ ПРОВЕРКИ ---
+
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
+
+    # ... остальной код ...
 
     if not category or not model:
         await update.message.reply_text("Ошибка: не выбрана категория или модель.", reply_markup=get_main_keyboard())
