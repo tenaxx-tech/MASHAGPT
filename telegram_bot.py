@@ -171,7 +171,6 @@ def get_text_models_keyboard():
     keyboard = []
     for model_id, label, price in models:
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
-        logger.info(f"Сравнение: text='{text}', btn_text='{btn_text}'")
         keyboard.append([KeyboardButton(btn_text)])
     keyboard.append([KeyboardButton("🔙 Главное меню")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -528,14 +527,14 @@ async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE,
     description = "100 звёзд = 100 промтов"
     payload = "topup_100"
     currency = "XTR"
-    prices = [LabeledPrice(label="100 звёзд", amount=100)]   # ← используем объект LabeledPrice
+    prices = [LabeledPrice(label="100 звёзд", amount=100)]
 
     await context.bot.send_invoice(
         chat_id=chat_id,
         title=title,
         description=description,
         payload=payload,
-        provider_token="",          # для Stars обязательно пустая строка
+        provider_token="",
         currency=currency,
         prices=prices,
         start_parameter="topup",
@@ -787,7 +786,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     category = context.user_data.get('media_category')
     text = update.message.text
 
-    # --- НОВАЯ ПРОВЕРКА ---
     # Если текст похож на кнопку выбора модели, игнорируем и просим ввести промпт
     if text.endswith("(бесплатно)") or ("(" in text and "промтов)" in text):
         await update.message.reply_text(
@@ -796,14 +794,11 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=get_cancel_keyboard()
         )
         return AWAIT_PROMPT
-    # --- КОНЕЦ ПРОВЕРКИ ---
 
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
-
-    # ... остальной код ...
 
     if not category or not model:
         await update.message.reply_text("Ошибка: не выбрана категория или модель.", reply_markup=get_main_keyboard())
