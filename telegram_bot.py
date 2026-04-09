@@ -652,7 +652,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     for model_id, label, price in models:
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
-         if text.strip() == btn_text.strip():
+        if text.strip() == btn_text.strip():
             context.user_data['selected_model'] = model_id
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = category
