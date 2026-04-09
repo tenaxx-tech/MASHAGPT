@@ -5,7 +5,7 @@ import logging
 from typing import List, Tuple
 
 import aiohttp
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, ConversationHandler, PreCheckoutQueryHandler,
@@ -527,11 +527,22 @@ async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE,
     description = "100 звёзд = 100 промтов"
     payload = "topup_100"
     currency = "XTR"
-    prices = [{"label": "100 звёзд", "amount": 100}]
+    prices = [LabeledPrice(label="100 звёзд", amount=100)]   # ← используем объект LabeledPrice
+
     await context.bot.send_invoice(
-        chat_id, title, description, payload, "", currency, prices,
-        start_parameter="topup", need_name=False, need_phone_number=False,
-        need_email=False, need_shipping_address=False, is_flexible=False
+        chat_id=chat_id,
+        title=title,
+        description=description,
+        payload=payload,
+        provider_token="",          # для Stars обязательно пустая строка
+        currency=currency,
+        prices=prices,
+        start_parameter="topup",
+        need_name=False,
+        need_phone_number=False,
+        need_email=False,
+        need_shipping_address=False,
+        is_flexible=False
     )
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
