@@ -1561,16 +1561,26 @@ async def main_async():
     port = int(os.getenv("PORT", 0))
     render_url = os.getenv("RENDER_EXTERNAL_URL")
 
-    if port and render_url:
-        # Режим webhook (на Render)
-        webhook_path = "/webhook"
-        webhook_url = f"{render_url}{webhook_path}"
+        port = int(os.getenv("PORT", 8080))  # по умолчанию 8080
+    webhook_url = os.getenv("WEBHOOK_URL")  # можно задать вручную в переменных окружения
+
+    if not webhook_url:
+        # Если переменная не задана, пробуем получить из RENDER_EXTERNAL_URL
+        render_url = os.getenv("RENDER_EXTERNAL_URL")
+        if render_url:
+            webhook_url = f"{render_url}/webhook"
+        else:
+            # Если и её нет, значит, мы не на Render – используем polling
+            webhook_url = None
+
+    if port and webhook_url:
+        # Режим webhook
         logger.info(f"Запуск в режиме webhook. URL: {webhook_url}")
         await app.bot.set_webhook(webhook_url)
-        await app.run_webhook(listen="0.0.0.0", port=port, webhook_path=webhook_path)
+        await app.run_webhook(listen="0.0.0.0", port=port, webhook_path="/webhook")
     else:
-        # Режим polling (локально)
-        logger.info("Запуск в режиме polling")
+        # Режим polling
+        logger.info("Запуск в режиме polling (локально или без webhook URL)")
         await app.run_polling()
 
 def main():
