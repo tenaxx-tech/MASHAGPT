@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import logging
+import os  # <-- добавлен для работы с переменными окружения
 from typing import List, Tuple
 
 import aiohttp
@@ -1509,7 +1510,7 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Запуск (polling) -------------------
+# ------------------- Запуск (webhook или polling) -------------------
 async def main_async():
     init_db()
     if not TELEGRAM_TOKEN or not MASHA_API_KEY:
@@ -1556,11 +1557,21 @@ async def main_async():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
-    logger.info("Бот запущен в режиме polling")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()
+    # Определяем режим запуска
+    port = int(os.getenv("PORT", 0))
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+
+    if port and render_url:
+        # Режим webhook (на Render)
+        webhook_path = "/webhook"
+        webhook_url = f"{render_url}{webhook_path}"
+        logger.info(f"Запуск в режиме webhook. URL: {webhook_url}")
+        await app.bot.set_webhook(webhook_url)
+        await app.run_webhook(listen="0.0.0.0", port=port, webhook_path=webhook_path)
+    else:
+        # Режим polling (локально)
+        logger.info("Запуск в режиме polling")
+        await app.run_polling()
 
 def main():
     asyncio.run(main_async())
