@@ -2,7 +2,7 @@ import asyncio
 import io
 import json
 import logging
-import os  # <-- добавлен для работы с переменными окружения
+import os
 from typing import List, Tuple
 
 import aiohttp
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 from PIL import Image
 
 # ------------------- Константы -------------------
-PAID_IMAGE_PRICE = 2  # цена платного изображения после исчерпания бесплатного лимита
+PAID_IMAGE_PRICE = 2
 
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
@@ -46,7 +46,6 @@ AWAIT_IMAGE_ONLY = 17
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
-    # Текст – бесплатно
     "gpt-5-nano": 0,
     "gpt-5-mini": 0,
     "gpt-4o-mini": 0,
@@ -59,7 +58,6 @@ MODEL_PRICES = {
     "gemini-2.0-flash": 0,
     "gemini-2.0-flash-lite": 0,
     "gemini-2.5-flash-lite": 0,
-    # Платные текстовые
     "gpt-5.4": 15,
     "gpt-5.1": 10,
     "gpt-5": 10,
@@ -75,7 +73,6 @@ MODEL_PRICES = {
     "gemini-2.5-pro": 10,
     "gemini-3-pro": 16,
     "gemini-3-pro-image": 12,
-    # Изображения – бесплатно (лимит 5/неделя)
     "z-image": 0,
     "grok-imagine-text-to-image": 0,
     "codeplugtech-face-swap": 0,
@@ -91,7 +88,6 @@ MODEL_PRICES = {
     "gpt-image-1-5-text-to-image": 0,
     "gpt-image-1-5-image-to-image": 0,
     "ideogram-v3-reframe": 0,
-    # Видео – платные
     "grok-imagine-text-to-video": 1,
     "wan-2-6-text-to-video": 3,
     "wan-2-5-text-to-video": 3,
@@ -112,12 +108,10 @@ MODEL_PRICES = {
     "minimax-video-01-director": 4,
     "seedance-v1-pro-fast": 30,
     "kling-2-6-motion-control": 6,
-    # Аудио
     "elevenlabs-tts-multilingual-v2": 0,
     "elevenlabs-tts-turbo-2-5": 0,
     "elevenlabs-text-to-dialogue-v3": 0,
     "elevenlabs-sound-effect-v2": 5,
-    # Аватар и анимация – платные
     "kling-v1-avatar-pro": 16,
     "kling-v1-avatar-standard": 8,
     "infinitalk-from-audio": 1.1,
@@ -127,20 +121,15 @@ MODEL_PRICES = {
 
 # Типы входных данных для моделей
 MODEL_INPUT_TYPE = {
-    # Два изображения (face swap)
     "codeplugtech-face-swap": ("image", "image"),
     "cdlingram-face-swap": ("image", "image"),
-    # Изображение + текст (редактирование)
     "gpt-image-1-5-image-to-image": ("image", "text"),
     "qwen-edit-multiangle": ("image", "text"),
-    # Изображение + аудио (аватар)
     "kling-v1-avatar-pro": ("image", "audio"),
     "kling-v1-avatar-standard": ("image", "audio"),
     "infinitalk-from-audio": ("image", "audio"),
-    # Видео + изображение (анимация)
     "wan-2-2-animate-move": ("video", "image"),
     "wan-2-2-animate-replace": ("video", "image"),
-    # Одно изображение (без текста)
     "recraft-remove-background": ("image",),
     "recraft-crisp-upscale": ("image",),
     "topaz-image-upscale": ("image",),
@@ -604,7 +593,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # ---- Текстовые модели ----
     if category == "text":
         models = [
             ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
@@ -621,7 +609,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("gemini-3-flash", "Gemini 3 Flash", 3), ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
             ("gemini-3-pro", "Gemini 3 Pro", 16), ("gemini-3-pro-image", "Gemini 3 Pro Image", 12)
         ]
-    # ---- Генерация изображений (текст->изображение) ----
     elif category == "image":
         models = [
             ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
@@ -636,7 +623,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
             ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
         ]
-    # ---- Видео ----
     elif category == "video":
         models = [
             ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
@@ -660,7 +646,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
             ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6)
         ]
-    # ---- Обработка изображений (edit) ----
     elif category == "edit":
         models = [
             ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
@@ -670,7 +655,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
             ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0)
         ]
-    # ---- Аудио ----
     elif category == "audio":
         models = [
             ("elevenlabs-tts-multilingual-v2", "Озвучка (Multilingual)", 0),
@@ -678,7 +662,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("elevenlabs-text-to-dialogue-v3", "Диалоги (Dialogue V3)", 0),
             ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5)
         ]
-    # ---- Аватар / анимация ----
     elif category == "avatar":
         models = [
             ("kling-v1-avatar-standard", "Kling Avatar Standard", 8),
@@ -691,7 +674,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         models = []
 
     for model_id, label, price in models:
-        # Формируем текст кнопки так же, как в клавиатуре
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
         if text.strip() == btn_text.strip():
             context.user_data['selected_model'] = model_id
@@ -708,7 +690,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 else:
                     await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите запрос:", reply_markup=get_cancel_keyboard())
                     return AWAIT_PROMPT
-
             elif input_type == ("image", "image"):
                 context.user_data['awaiting'] = 'face_swap_target'
                 await update.message.reply_text(
@@ -720,7 +701,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=get_cancel_keyboard()
                 )
                 return AWAIT_FACE_SWAP_TARGET
-
             elif input_type == ("image", "text"):
                 context.user_data['awaiting'] = 'edit_image'
                 await update.message.reply_text(
@@ -732,7 +712,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=get_cancel_keyboard()
                 )
                 return AWAIT_IMAGE_FOR_EDIT
-
             elif input_type == ("image", "audio"):
                 context.user_data['awaiting'] = 'avatar_image'
                 await update.message.reply_text(
@@ -744,7 +723,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=get_cancel_keyboard()
                 )
                 return AWAIT_IMAGE_FOR_AVATAR
-
             elif input_type == ("video", "image"):
                 context.user_data['awaiting'] = 'animate_video'
                 await update.message.reply_text(
@@ -756,7 +734,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=get_cancel_keyboard()
                 )
                 return AWAIT_VIDEO_FOR_ANIMATE
-
             elif input_type == ("image",):
                 await update.message.reply_text(
                     f"🔹 Модель: {label}\n"
@@ -765,7 +742,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                     reply_markup=get_cancel_keyboard()
                 )
                 return AWAIT_IMAGE_ONLY
-
             else:
                 await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите запрос:", reply_markup=get_cancel_keyboard())
                 return AWAIT_PROMPT
@@ -1386,7 +1362,6 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчик для одного изображения -------------------
 async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1487,7 +1462,6 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -1557,29 +1531,21 @@ async def main_async():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
-    # Определяем режим запуска
-    port = int(os.getenv("PORT", 0))
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-
-    port = int(os.getenv("PORT", 8080))  # по умолчанию 8080
-    webhook_url = os.getenv("WEBHOOK_URL")  # можно задать вручную в переменных окружения
+    port = int(os.getenv("PORT", 8080))
+    webhook_url = os.getenv("WEBHOOK_URL")
 
     if not webhook_url:
-        # Если переменная не задана, пробуем получить из RENDER_EXTERNAL_URL
         render_url = os.getenv("RENDER_EXTERNAL_URL")
         if render_url:
             webhook_url = f"{render_url}/webhook"
         else:
-            # Если и её нет, значит, мы не на Render – используем polling
             webhook_url = None
 
     if port and webhook_url:
-        # Режим webhook
         logger.info(f"Запуск в режиме webhook. URL: {webhook_url}")
         await app.bot.set_webhook(webhook_url)
         await app.run_webhook(listen="0.0.0.0", port=port, webhook_path="/webhook")
     else:
-        # Режим polling
         logger.info("Запуск в режиме polling (локально или без webhook URL)")
         await app.run_polling()
 
