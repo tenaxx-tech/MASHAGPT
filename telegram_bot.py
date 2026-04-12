@@ -1561,7 +1561,7 @@ async def main_async():
     port = int(os.getenv("PORT", 0))
     render_url = os.getenv("RENDER_EXTERNAL_URL")
 
-        port = int(os.getenv("PORT", 8080))  # по умолчанию 8080
+    port = int(os.getenv("PORT", 8080))  # по умолчанию 8080
     webhook_url = os.getenv("WEBHOOK_URL")  # можно задать вручную в переменных окружения
 
     if not webhook_url:
