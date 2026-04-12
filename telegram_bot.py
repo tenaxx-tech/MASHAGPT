@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import List, Tuple
+from aiohttp import web
 
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
@@ -21,9 +22,11 @@ from database import (
     get_weekly_image_count, increment_weekly_image_count
 )
 
+# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -46,80 +49,33 @@ AWAIT_IMAGE_ONLY = 17
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
-    "gpt-5-nano": 0,
-    "gpt-5-mini": 0,
-    "gpt-4o-mini": 0,
-    "gpt-4.1-nano": 0,
-    "deepseek-chat": 0,
-    "deepseek-reasoner": 0,
-    "grok-4-1-fast-reasoning": 0,
-    "grok-4-1-fast-non-reasoning": 0,
-    "grok-3-mini": 0,
-    "gemini-2.0-flash": 0,
-    "gemini-2.0-flash-lite": 0,
-    "gemini-2.5-flash-lite": 0,
-    "gpt-5.4": 15,
-    "gpt-5.1": 10,
-    "gpt-5": 10,
-    "gpt-4.1": 8,
-    "gpt-4o": 10,
-    "o3-mini": 4.4,
-    "o3": 40,
-    "o1": 60,
-    "claude-haiku-4-5": 5,
-    "claude-sonnet-4-5": 15,
-    "claude-opus-4-5": 25,
-    "gemini-3-flash": 3,
-    "gemini-2.5-pro": 10,
-    "gemini-3-pro": 16,
-    "gemini-3-pro-image": 12,
-    "z-image": 0,
-    "grok-imagine-text-to-image": 0,
-    "codeplugtech-face-swap": 0,
-    "cdlingram-face-swap": 0,
-    "recraft-crisp-upscale": 0,
-    "recraft-remove-background": 0,
-    "topaz-image-upscale": 0,
-    "flux-2": 0,
-    "qwen-edit-multiangle": 0,
-    "nano-banana-2": 0,
-    "nano-banana-pro": 0,
-    "midjourney": 0,
-    "gpt-image-1-5-text-to-image": 0,
-    "gpt-image-1-5-image-to-image": 0,
+    "gpt-5-nano": 0, "gpt-5-mini": 0, "gpt-4o-mini": 0, "gpt-4.1-nano": 0,
+    "deepseek-chat": 0, "deepseek-reasoner": 0,
+    "grok-4-1-fast-reasoning": 0, "grok-4-1-fast-non-reasoning": 0, "grok-3-mini": 0,
+    "gemini-2.0-flash": 0, "gemini-2.0-flash-lite": 0, "gemini-2.5-flash-lite": 0,
+    "gpt-5.4": 15, "gpt-5.1": 10, "gpt-5": 10, "gpt-4.1": 8, "gpt-4o": 10,
+    "o3-mini": 4.4, "o3": 40, "o1": 60,
+    "claude-haiku-4-5": 5, "claude-sonnet-4-5": 15, "claude-opus-4-5": 25,
+    "gemini-3-flash": 3, "gemini-2.5-pro": 10, "gemini-3-pro": 16, "gemini-3-pro-image": 12,
+    "z-image": 0, "grok-imagine-text-to-image": 0,
+    "codeplugtech-face-swap": 0, "cdlingram-face-swap": 0,
+    "recraft-crisp-upscale": 0, "recraft-remove-background": 0, "topaz-image-upscale": 0,
+    "flux-2": 0, "qwen-edit-multiangle": 0, "nano-banana-2": 0, "nano-banana-pro": 0,
+    "midjourney": 0, "gpt-image-1-5-text-to-image": 0, "gpt-image-1-5-image-to-image": 0,
     "ideogram-v3-reframe": 0,
-    "grok-imagine-text-to-video": 1,
-    "wan-2-6-text-to-video": 3,
-    "wan-2-5-text-to-video": 3,
-    "wan-2-6-image-to-video": 3,
-    "wan-2-6-video-to-video": 3,
-    "wan-2-5-image-to-video": 3,
-    "sora-2-text-to-video": 3,
-    "sora-2-image-to-video": 3,
-    "veo-3-1": 5,
-    "kling-2-6-text-to-video": 6,
-    "kling-v2-5-turbo-pro": 6,
-    "kling-2-6-image-to-video": 6,
-    "kling-v2-5-turbo-image-to-video-pro": 5,
-    "sora-2-pro-text-to-video": 5,
-    "sora-2-pro-image-to-video": 5,
-    "sora-2-pro-storyboard": 7,
-    "hailuo-2-3": 4,
-    "minimax-video-01-director": 4,
-    "seedance-v1-pro-fast": 30,
-    "kling-2-6-motion-control": 6,
-    "elevenlabs-tts-multilingual-v2": 0,
-    "elevenlabs-tts-turbo-2-5": 0,
-    "elevenlabs-text-to-dialogue-v3": 0,
-    "elevenlabs-sound-effect-v2": 5,
-    "kling-v1-avatar-pro": 16,
-    "kling-v1-avatar-standard": 8,
-    "infinitalk-from-audio": 1.1,
-    "wan-2-2-animate-move": 0.75,
-    "wan-2-2-animate-replace": 0.75,
+    "grok-imagine-text-to-video": 1, "wan-2-6-text-to-video": 3, "wan-2-5-text-to-video": 3,
+    "wan-2-6-image-to-video": 3, "wan-2-6-video-to-video": 3, "wan-2-5-image-to-video": 3,
+    "sora-2-text-to-video": 3, "sora-2-image-to-video": 3, "veo-3-1": 5,
+    "kling-2-6-text-to-video": 6, "kling-v2-5-turbo-pro": 6, "kling-2-6-image-to-video": 6,
+    "kling-v2-5-turbo-image-to-video-pro": 5, "sora-2-pro-text-to-video": 5,
+    "sora-2-pro-image-to-video": 5, "sora-2-pro-storyboard": 7, "hailuo-2-3": 4,
+    "minimax-video-01-director": 4, "seedance-v1-pro-fast": 30, "kling-2-6-motion-control": 6,
+    "elevenlabs-tts-multilingual-v2": 0, "elevenlabs-tts-turbo-2-5": 0,
+    "elevenlabs-text-to-dialogue-v3": 0, "elevenlabs-sound-effect-v2": 5,
+    "kling-v1-avatar-pro": 16, "kling-v1-avatar-standard": 8, "infinitalk-from-audio": 1.1,
+    "wan-2-2-animate-move": 0.75, "wan-2-2-animate-replace": 0.75,
 }
 
-# Типы входных данных для моделей
 MODEL_INPUT_TYPE = {
     "codeplugtech-face-swap": ("image", "image"),
     "cdlingram-face-swap": ("image", "image"),
@@ -1484,7 +1440,21 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Запуск (webhook или polling) -------------------
+# ------------------- Запуск (polling + healthcheck) -------------------
+async def run_health_check_server(port):
+    """Простой HTTP-сервер для health check (чтобы Render видел порт)"""
+    app_web = web.Application()
+    async def health(request):
+        return web.Response(text="OK")
+    app_web.router.add_get('/health', health)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Health check сервер запущен на порту {port}")
+    # Бесконечно ждём
+    await asyncio.Event().wait()
+
 async def main_async():
     init_db()
     if not TELEGRAM_TOKEN or not MASHA_API_KEY:
@@ -1531,26 +1501,21 @@ async def main_async():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
+    # Запускаем health check сервер, чтобы Render не ругался на отсутствие порта
     port = int(os.getenv("PORT", 8080))
-    webhook_url = os.getenv("WEBHOOK_URL")
+    asyncio.create_task(run_health_check_server(port))
 
-    if not webhook_url:
-        render_url = os.getenv("RENDER_EXTERNAL_URL")
-        if render_url:
-            webhook_url = f"{render_url}/webhook"
-        else:
-            webhook_url = None
-
-    if port and webhook_url:
-        logger.info(f"Запуск в режиме webhook. URL: {webhook_url}")
-        await app.bot.set_webhook(webhook_url)
-        await app.run_webhook(listen="0.0.0.0", port=port, webhook_path="/webhook")
-    else:
-        logger.info("Запуск в режиме polling (локально или без webhook URL)")
-        await app.run_polling()
+    logger.info("Запуск бота в режиме polling")
+    await app.run_polling()
 
 def main():
-    asyncio.run(main_async())
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.exception(f"Критическая ошибка: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
