@@ -41,7 +41,7 @@ AWAIT_IMAGE_FOR_AVATAR = 13
 AWAIT_AUDIO_FOR_AVATAR = 14
 AWAIT_VIDEO_FOR_ANIMATE = 15
 AWAIT_IMAGE_FOR_ANIMATE = 16
-AWAIT_IMAGE_ONLY = 17   # для моделей, ожидающих одно изображение
+AWAIT_IMAGE_ONLY = 17
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
@@ -603,6 +603,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
+    # ---- Текстовые модели ----
     if category == "text":
         models = [
             ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
@@ -619,6 +620,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("gemini-3-flash", "Gemini 3 Flash", 3), ("gemini-2.5-pro", "Gemini 2.5 Pro", 10),
             ("gemini-3-pro", "Gemini 3 Pro", 16), ("gemini-3-pro-image", "Gemini 3 Pro Image", 12)
         ]
+    # ---- Генерация изображений (текст->изображение) ----
     elif category == "image":
         models = [
             ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
@@ -633,6 +635,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
             ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
         ]
+    # ---- Видео ----
     elif category == "video":
         models = [
             ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
@@ -656,10 +659,38 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             ("seedance-v1-pro-fast", "Seedance V1 Pro Fast", 30),
             ("kling-2-6-motion-control", "Kling 2.6 Motion Control", 6)
         ]
+    # ---- Обработка изображений (edit) ----
+    elif category == "edit":
+        models = [
+            ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
+            ("recraft-remove-background", "Recraft Remove Background", 0),
+            ("topaz-image-upscale", "Topaz Image Upscale", 0),
+            ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
+            ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
+            ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0)
+        ]
+    # ---- Аудио ----
+    elif category == "audio":
+        models = [
+            ("elevenlabs-tts-multilingual-v2", "Озвучка (Multilingual)", 0),
+            ("elevenlabs-tts-turbo-2-5", "Быстрая озвучка (Turbo)", 0),
+            ("elevenlabs-text-to-dialogue-v3", "Диалоги (Dialogue V3)", 0),
+            ("elevenlabs-sound-effect-v2", "Звуковые эффекты (Sound Effect V2)", 5)
+        ]
+    # ---- Аватар / анимация ----
+    elif category == "avatar":
+        models = [
+            ("kling-v1-avatar-standard", "Kling Avatar Standard", 8),
+            ("kling-v1-avatar-pro", "Kling Avatar Pro", 16),
+            ("infinitalk-from-audio", "Infinitalk (говорящая голова)", 1.1),
+            ("wan-2-2-animate-move", "Wan Animate Move", 0.75),
+            ("wan-2-2-animate-replace", "Wan Animate Replace", 0.75)
+        ]
     else:
         models = []
 
     for model_id, label, price in models:
+        # Формируем текст кнопки так же, как в клавиатуре
         btn_text = f"{label} (бесплатно)" if price == 0 else f"{label} ({price} промтов)"
         if text.strip() == btn_text.strip():
             context.user_data['selected_model'] = model_id
@@ -930,7 +961,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ------------------- Обработчики для многошаговых моделей -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Обработка кнопки "Главное меню" и других текстов
     if update.message.text:
         text = update.message.text.strip()
         if text == "🔙 Главное меню":
