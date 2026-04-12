@@ -1455,6 +1455,20 @@ async def run_health_check_server(port):
     # Бесконечно ждём
     await asyncio.Event().wait()
 
+# ------------------- Health check сервер -------------------
+async def run_health_check_server(port):
+    app_web = web.Application()
+    async def health(request):
+        return web.Response(text="OK")
+    app_web.router.add_get('/health', health)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Health check сервер запущен на порту {port}")
+    await asyncio.Event().wait()
+
+# ------------------- Запуск -------------------
 async def main_async():
     init_db()
     if not TELEGRAM_TOKEN or not MASHA_API_KEY:
@@ -1501,21 +1515,33 @@ async def main_async():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
-    # Запускаем health check сервер, чтобы Render не ругался на отсутствие порта
     port = int(os.getenv("PORT", 8080))
+    # Запускаем health check сервер в фоне
     asyncio.create_task(run_health_check_server(port))
 
     logger.info("Запуск бота в режиме polling")
-    await app.run_polling()
+    # Ручной запуск без конфликта циклов
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    # Бесконечное ожидание
+    await asyncio.Event().wait()
 
 def main():
     try:
-        asyncio.run(main_async())
+        # Используем существующий или новый цикл событий
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main_async())
     except KeyboardInterrupt:
         logger.info("Бот остановлен")
     except Exception as e:
         logger.exception(f"Критическая ошибка: {e}")
-        raise
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
