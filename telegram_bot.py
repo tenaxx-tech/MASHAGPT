@@ -480,14 +480,21 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
     img_left = max(0, 5 - img_used)
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]])
-    await update.message.reply_text(
-        f"💰 Ваш баланс: {bal} промтов\n"
-        f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе\n"
-        f"   Осталось бесплатных: {img_left}\n"
-        f"💎 Платное изображение (после лимита): {PAID_IMAGE_PRICE} промтов",
-        reply_markup=keyboard
+    
+    text = (
+        f"👤 **Ваш ID:** `{user_id}`\n"
+        f"💰 **Баланс:** {bal} промтов\n"
+        f"🖼 **Бесплатные изображения:** {img_used}/5 использовано на этой неделе (осталось {img_left})\n"
+        f"💎 **Платное изображение** (после лимита): {PAID_IMAGE_PRICE} промтов\n\n"
+        f"📞 **По вопросам:** [Написать создателю](https://t.me/Dmitriy_Uretskiy)"
     )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")],
+        [InlineKeyboardButton("📞 Поддержка", url="https://t.me/Dmitriy_Uretskiy")]
+    ])
+    
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
