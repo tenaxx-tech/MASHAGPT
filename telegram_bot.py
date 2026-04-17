@@ -335,7 +335,7 @@ async def wait_for_task(task_id: str, timeout=300):
         if asyncio.get_running_loop().time() - start > timeout:
             raise Exception(f"Таймаут {timeout} секунд")
 
-async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str) -> str:
+async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model: str, retries=5) -> str:
     messages = []
     for role, content in history[-5:]:
         messages.append({"role": role, "content": content})
@@ -349,6 +349,42 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
         "max_completion_tokens": 1024,
         "temperature": 1.0
     }
+    
+    for attempt in range(retries):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=180)) as resp:
+                    if resp.status in (429, 502, 504):
+                        wait = 2 ** attempt
+                        logger.warning(f"Статус {resp.status}, повтор через {wait} сек (попытка {attempt+1}/{retries})")
+                        await asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    content = None
+                    if "choices" in data and len(data["choices"]) > 0:
+                        content = data["choices"][0].get("message", {}).get("content")
+                    if not content:
+                        content = data.get("result") or data.get("output")
+                    if not content:
+                        return ""
+                    return content
+        except asyncio.TimeoutError:
+            logger.error(f"Таймаут при запросе к MashaGPT (попытка {attempt+1}/{retries})")
+            if attempt == retries - 1:
+                raise Exception("Таймаут: сервер MashaGPT не отвечает")
+            await asyncio.sleep(2 ** attempt)
+        except aiohttp.ClientError as e:
+            logger.error(f"Ошибка клиента: {e} (попытка {attempt+1}/{retries})")
+            if attempt == retries - 1:
+                raise Exception(f"Ошибка соединения: {e}")
+            await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            logger.error(f"Неизвестная ошибка: {e} (попытка {attempt+1}/{retries})")
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(2 ** attempt)
+    raise Exception("Не удалось получить ответ от MashaGPT после нескольких попыток")
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as resp:
             if resp.status != 200:
@@ -364,32 +400,39 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
                 return ""
             return content
 
-async def masha_media_generate(model: str, payload: dict):
-    task_id = await create_task(model, payload)
-    if not task_id:
-        raise Exception("Не удалось создать задачу")
-    result = await wait_for_task(task_id)
-    if not result:
-        raise Exception("Не удалось получить результат")
-    if not isinstance(result, dict):
-        raise Exception(f"Неверный формат ответа: {result}")
-    outputs = result.get("output", [])
-    if not outputs:
-        raise Exception("Нет output в ответе")
-    if isinstance(outputs[0], dict):
-        media_url = outputs[0].get("url")
-    elif isinstance(outputs[0], str):
-        media_url = outputs[0]
-    else:
-        raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
-    if not media_url:
-        raise Exception("Нет URL в ответе")
-    async with aiohttp.ClientSession() as session:
-        async with session.get(media_url) as resp:
-            if resp.status != 200:
-                raise Exception(f"Ошибка скачивания файла: {resp.status}")
-            file_bytes = await resp.read()
-    return file_bytes, media_url
+async def masha_media_generate(model: str, payload: dict, retries=5):
+    for attempt in range(retries):
+        try:
+            task_id = await create_task(model, payload)
+            if task_id:
+                result = await wait_for_task(task_id)
+                if result and isinstance(result, dict):
+                    outputs = result.get("output", [])
+                    if outputs:
+                        if isinstance(outputs[0], dict):
+                            media_url = outputs[0].get("url")
+                        elif isinstance(outputs[0], str):
+                            media_url = outputs[0]
+                        else:
+                            raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
+                        if media_url:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(media_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                                    if resp.status != 200:
+                                        raise Exception(f"Ошибка скачивания файла: {resp.status}")
+                                    file_bytes = await resp.read()
+                            return file_bytes, media_url
+            # Если task_id не создался или результат пустой
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise Exception("Не удалось получить результат")
+        except Exception as e:
+            logger.error(f"Ошибка генерации медиа (попытка {attempt+1}/{retries}): {e}")
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(2 ** attempt)
+    raise Exception("Не удалось сгенерировать медиа")
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
