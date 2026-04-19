@@ -34,7 +34,7 @@ from PIL import Image
 
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2
-ADMIN_IDS = [466829859]   # Ваш Telegram user_id
+
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
@@ -480,39 +480,15 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
     img_left = max(0, 5 - img_used)
-    
-    text = (
-        f"👤 **Ваш ID:** `{user_id}`\n"
-        f"💰 **Баланс:** {bal} промтов\n"
-        f"🖼 **Бесплатные изображения:** {img_used}/5 использовано на этой неделе (осталось {img_left})\n"
-        f"💎 **Платное изображение** (после лимита): {PAID_IMAGE_PRICE} промтов\n\n"
-        f"📞 **По вопросам:** [Написать создателю](https://t.me/Dmitriy_Uretskiy)"
-    )
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")],
-        [InlineKeyboardButton("📞 Поддержка", url="https://t.me/Dmitriy_Uretskiy")]
-    ])
-    
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
-        return
-    try:
-        target_user_id = int(context.args[0])
-        amount = int(context.args[1])
-    except (IndexError, ValueError):
-        await update.message.reply_text("❌ Использование: /add_balance <user_id> <количество_промтов>\nПример: /add_balance 466829859 100")
-        return
-    add_balance(target_user_id, amount)
-    new_balance = get_user_balance(target_user_id)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]])
     await update.message.reply_text(
-        f"✅ Пользователю `{target_user_id}` начислено {amount} промтов.\n"
-        f"💰 Новый баланс: {new_balance} промтов.",
-        parse_mode="Markdown"
+        f"💰 Ваш баланс: {bal} промтов\n"
+        f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе\n"
+        f"   Осталось бесплатных: {img_left}\n"
+        f"💎 Платное изображение (после лимита): {PAID_IMAGE_PRICE} промтов",
+        reply_markup=keyboard
     )
+
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
         chat_id = update.effective_chat.id
@@ -1694,18 +1670,15 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчик платежей -------------------
+# ------------------- Обработчики платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка предварительной проверки перед оплатой"""
     query = update.pre_checkout_query
-    # Проверяем, что это наш платеж
     if query.invoice_payload == "topup_100":
         await query.answer(ok=True)
     else:
         await query.answer(ok=False, error_message="Неизвестный товар")
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начисление токенов после успешной оплаты"""
     user_id = update.effective_user.id
     amount = update.message.successful_payment.total_amount
     add_balance(user_id, amount)
@@ -1783,7 +1756,6 @@ async def main_async():
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("clear", clear_dialog))
-    app.add_handler(CommandHandler("add_balance", add_balance_command))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
