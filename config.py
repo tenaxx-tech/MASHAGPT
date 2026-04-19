@@ -15,8 +15,20 @@ if not MASHA_API_KEY:
     sys.exit(1)
 
 MASHA_BASE_URL = "https://api.mashagpt.ru/v1"
-# Если хотите использовать переменную окружения, раскомментируйте следующую строку:
 # MASHA_BASE_URL = os.getenv("MASHA_BASE_URL", "https://api.mashagpt.ru/v1")
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 PORT = int(os.getenv("PORT", 8080))
+
+# ---------- Robokassa ----------
+ROBOKASSA_LOGIN = os.getenv("ROBOKASSA_LOGIN")
+ROBOKASSA_PASSWORD1 = os.getenv("ROBOKASSA_PASSWORD1")
+ROBOKASSA_PASSWORD2 = os.getenv("ROBOKASSA_PASSWORD2")
+ROBOKASSA_TEST_MODE = os.getenv("ROBOKASSA_TEST_MODE", "True").lower() == "true"
+ROBOKASSA_RESULT_URL = os.getenv("ROBOKASSA_RESULT_URL")
+ROBOKASSA_SUCCESS_URL = os.getenv("ROBOKASSA_SUCCESS_URL")
+ROBOKASSA_FAIL_URL = os.getenv("ROBOKASSA_FAIL_URL")
+
+if not ROBOKASSA_LOGIN:
+    print("❌ ROBOKASSA_LOGIN не задан в .env")
+    sys.exit(1)
