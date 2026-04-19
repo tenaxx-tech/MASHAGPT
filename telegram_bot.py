@@ -1694,15 +1694,18 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики платежей -------------------
+# ------------------- Обработчик платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка предварительной проверки перед оплатой"""
     query = update.pre_checkout_query
+    # Проверяем, что это наш платеж
     if query.invoice_payload == "topup_100":
         await query.answer(ok=True)
     else:
         await query.answer(ok=False, error_message="Неизвестный товар")
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начисление токенов после успешной оплаты"""
     user_id = update.effective_user.id
     amount = update.message.successful_payment.total_amount
     add_balance(user_id, amount)
