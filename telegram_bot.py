@@ -22,9 +22,13 @@ from database import (
     get_weekly_image_count, increment_weekly_image_count
 )
 
+# Импорты для Robokassa
+from robokassa import get_payment_url, check_result_signature, check_success_signature
+from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
+
 # Настройка логирования
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %name)s - %levelname)s - %message)s",
     level=logging.INFO,
     handlers=[logging.StreamHandler()]
 )
@@ -35,6 +39,7 @@ from PIL import Image
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2
 ADMIN_IDS = [466829859]   # Ваш Telegram user_id
+
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
@@ -54,6 +59,9 @@ AWAIT_PHOTO_FOR_ANIMATE = 20
 AWAIT_MODE_FOR_ANIMATE = 21
 AWAIT_PROMPT_FOR_ANIMATE = 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
+
+# Состояние для Robokassa
+AWAIT_ROBOKASSA_AMOUNT = 24
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
@@ -449,8 +457,7 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
-
-# ------------------- Обработчики -------------------
+    # ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
@@ -490,11 +497,13 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")],
+        [InlineKeyboardButton("⭐ Пополнить промты (Stars)", callback_data="topup")],
+        [InlineKeyboardButton("💳 Пополнить через Робокассу", callback_data="robokassa_topup")],
         [InlineKeyboardButton("📞 Поддержка", url="https://t.me/Dmitriy_Uretskiy")]
     ])
     
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -513,6 +522,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"💰 Новый баланс: {new_balance} промтов.",
         parse_mode="Markdown"
     )
+
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
         chat_id = update.effective_chat.id
@@ -591,12 +601,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Определяем категорию по текущему состоянию (хранится в context.user_data)
-    # В этом обработчике мы будем определять модель по тексту кнопки.
-    # Для каждой категории (текст, изображения, видео, аудио, аватар) есть свой набор моделей.
-    # Мы проверим все возможные модели.
-
-    # Сначала проверим текстовые модели
+    # Проверяем текстовые модели
     text_models = [
         ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
         ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
@@ -622,7 +627,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите ваш запрос:", reply_markup=get_cancel_keyboard())
             return DIALOG
 
-    # Проверяем модели изображений (бесплатные)
+    # Проверяем модели изображений
     image_models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
@@ -643,7 +648,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'image'
             context.user_data['media_category'] = 'image'
-            # Определяем тип ввода
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("image", "image"):
                 await update.message.reply_text(
@@ -677,7 +681,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return AWAIT_PROMPT
 
-    # Проверяем модели видео (платные, но все они в списке MODEL_PRICES имеют ненулевую цену)
+    # Проверяем модели видео
     video_models = [
         ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
         ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
@@ -707,7 +711,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'video'
             context.user_data['media_category'] = 'video'
-            # Проверяем тип ввода
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("video", "image"):
                 await update.message.reply_text(
@@ -795,7 +798,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return AWAIT_PROMPT
 
-    # Если ничего не найдено
     await update.message.reply_text("Пожалуйста, выберите модель из списка или вернитесь в главное меню.", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
@@ -862,6 +864,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MAIN_MENU
 
     used = 0
+    paid = False
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -875,8 +878,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.", reply_markup=get_main_keyboard())
                 return MAIN_MENU
-        else:
-            paid = False
     elif price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -1066,7 +1067,6 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
-        # Используем deepseek-chat для генерации промта
         answer = await masha_text_generate(user_prompt, history, "deepseek-chat")
     finally:
         stop_action.set()
@@ -1319,7 +1319,7 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- Обработчики для face swap, edit, avatar, animate (из вашего предыдущего кода) -------------------
+# ------------------- Обработчики для face swap, edit, avatar, animate -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1694,18 +1694,63 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчик платежей -------------------
+# ------------------- Обработчики для Robokassa -------------------
+async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик нажатия кнопки 'Пополнить через Робокассу'"""
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "💰 Введите сумму пополнения в рублях (минимально 100 руб):\n\n"
+        "После ввода суммы я сгенерирую ссылку для оплаты через Robokassa.",
+        reply_markup=get_cancel_keyboard()
+    )
+    return AWAIT_ROBOKASSA_AMOUNT
+
+async def handle_robokassa_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь ввёл сумму для пополнения через Robokassa"""
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    try:
+        amount = int(text)
+        if amount < 100:
+            await update.message.reply_text("Минимальная сумма 100 руб. Попробуйте ещё раз:", reply_markup=get_cancel_keyboard())
+            return AWAIT_ROBOKASSA_AMOUNT
+    except ValueError:
+        await update.message.reply_text("Пожалуйста, введите целое число (сумму в рублях):", reply_markup=get_cancel_keyboard())
+        return AWAIT_ROBOKASSA_AMOUNT
+
+    # Генерируем уникальный номер заказа (InvId)
+    import time
+    inv_id = int(time.time() * 100) % 10**9
+    create_robokassa_order(inv_id, user_id, amount)
+    link = get_payment_url(inv_id, amount, description=f"Пополнение баланса на {amount} промтов")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Перейти к оплате", url=link)]
+    ])
+    await update.message.reply_text(
+        f"Счёт на сумму {amount} руб. создан.\n\n"
+        f"Нажмите на кнопку ниже, чтобы оплатить через Robokassa.\n"
+        f"После оплаты ваш баланс пополнится автоматически в течение нескольких минут.\n\n"
+        f"Номер заказа: `{inv_id}`",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+# ------------------- Обработчики платежей (Stars) -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка предварительной проверки перед оплатой"""
     query = update.pre_checkout_query
-    # Проверяем, что это наш платеж
     if query.invoice_payload == "topup_100":
         await query.answer(ok=True)
     else:
         await query.answer(ok=False, error_message="Неизвестный товар")
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начисление токенов после успешной оплаты"""
     user_id = update.effective_user.id
     amount = update.message.successful_payment.total_amount
     add_balance(user_id, amount)
@@ -1720,17 +1765,103 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Health check сервер -------------------
-async def run_health_check_server(port):
-    app_web = web.Application()
+# ------------------- Веб-сервер для health и Robokassa -------------------
+async def run_web_server_with_robokassa(port, bot_instance):
+    """Веб-сервер для healthcheck и уведомлений Robokassa"""
+    web_app = web.Application()
+    
     async def health(request):
         return web.Response(text="OK")
-    app_web.router.add_get('/health', health)
-    runner = web.AppRunner(app_web)
+    
+    async def robokassa_result(request):
+        """Обработка Result URL (техническое уведомление)"""
+        data = await request.post()
+        params = dict(data)
+        logger.info(f"Robokassa result notification: {params}")
+        
+        if not check_result_signature(params):
+            logger.error("Invalid signature for result notification")
+            return web.Response(text="bad sign", status=400)
+        
+        inv_id = int(params.get("InvId"))
+        out_sum = float(params.get("OutSum"))
+        order = get_robokassa_order(inv_id)
+        
+        if not order:
+            logger.error(f"Order {inv_id} not found")
+            return web.Response(text=f"Order {inv_id} not found", status=404)
+        
+        if order["status"] == "success":
+            return web.Response(text=f"OK{inv_id}")
+        
+        # Проверка суммы
+        if abs(order["amount"] - out_sum) > 0.01:
+            logger.error(f"Amount mismatch: {order['amount']} vs {out_sum}")
+            return web.Response(text="amount mismatch", status=400)
+        
+        # Начисляем баланс
+        user_id = order["user_id"]
+        add_balance(user_id, order["amount"])
+        update_robokassa_order_status(inv_id, "success")
+        
+        # Уведомляем пользователя в Telegram
+        try:
+            await bot_instance.send_message(
+                chat_id=user_id,
+                text=f"✅ Ваш баланс пополнен на {order['amount']} промтов через Robokassa!"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить пользователя {user_id}: {e}")
+        
+        return web.Response(text=f"OK{inv_id}")
+    
+    async def robokassa_success(request):
+        """Success URL – пользователь вернулся после оплаты"""
+        params = dict(request.query)
+        logger.info(f"Robokassa success redirect: {params}")
+        # Необязательная проверка подписи (но можно включить)
+        if not check_success_signature(params):
+            return web.Response(text="bad sign", status=400)
+        inv_id = params.get("InvId")
+        html = f"""
+        <html>
+        <head><title>Оплата успешна</title></head>
+        <body>
+            <h1>Спасибо за оплату!</h1>
+            <p>Ваш заказ №{inv_id} оплачен. Баланс пополнен.</p>
+            <p>Вы можете вернуться в телеграм-бота и продолжить пользоваться сервисом.</p>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+    
+    async def robokassa_fail(request):
+        """Fail URL – пользователь отменил оплату или ошибка"""
+        params = dict(request.query)
+        logger.info(f"Robokassa fail redirect: {params}")
+        inv_id = params.get("InvId")
+        html = f"""
+        <html>
+        <head><title>Оплата не удалась</title></head>
+        <body>
+            <h1>Оплата не была завершена</h1>
+            <p>Заказ №{inv_id}. Если вы не оплачивали, попробуйте ещё раз.</p>
+            <p>Вернитесь в бота и создайте новый счёт.</p>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+    
+    web_app.router.add_get('/health', health)
+    web_app.router.add_post('/robokassa/result', robokassa_result)
+    web_app.router.add_get('/robokassa/success', robokassa_success)
+    web_app.router.add_get('/robokassa/fail', robokassa_fail)
+    
+    runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logger.info(f"Health check сервер запущен на порту {port}")
+    logger.info(f"Web server (health + robokassa) запущен на порту {port}")
     await asyncio.Event().wait()
 
 # ------------------- Запуск -------------------
@@ -1778,6 +1909,7 @@ async def main_async():
                                       MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)],
             AWAIT_MODE_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_mode)],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
+            AWAIT_ROBOKASSA_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_robokassa_amount)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -1787,9 +1919,10 @@ async def main_async():
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
+    app.add_handler(CallbackQueryHandler(inline_robokassa_topup, pattern="robokassa_topup"))
 
     port = int(os.getenv("PORT", 8080))
-    asyncio.create_task(run_health_check_server(port))
+    asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
 
     logger.info("Запуск бота в режиме polling")
     await app.initialize()
