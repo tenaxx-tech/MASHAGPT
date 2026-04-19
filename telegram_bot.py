@@ -28,7 +28,7 @@ from database import create_robokassa_order, update_robokassa_order_status, get_
 
 # Настройка логирования
 logging.basicConfig(
-    format="%(asctime)s - %name)s - %levelname)s - %message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[logging.StreamHandler()]
 )
