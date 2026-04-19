@@ -54,6 +54,17 @@ def init_db():
         )
     ''')
 
+    # ---------- Новая таблица для заказов Robokassa ----------
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS robokassa_orders (
+            inv_id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            amount INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
@@ -186,3 +197,34 @@ def update_donation_token(access_token, refresh_token, expires_in):
               (access_token, refresh_token, expires_at))
     conn.commit()
     conn.close()
+
+# ---------- Новые функции для Robokassa ----------
+def create_robokassa_order(inv_id: int, user_id: int, amount: int):
+    """Создаёт запись о заказе в Robokassa"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR REPLACE INTO robokassa_orders (inv_id, user_id, amount, status)
+        VALUES (?, ?, ?, 'pending')
+    ''', (inv_id, user_id, amount))
+    conn.commit()
+    conn.close()
+
+def update_robokassa_order_status(inv_id: int, status: str):
+    """Обновляет статус заказа (success, fail)"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE robokassa_orders SET status = ? WHERE inv_id = ?', (status, inv_id))
+    conn.commit()
+    conn.close()
+
+def get_robokassa_order(inv_id: int):
+    """Возвращает информацию о заказе"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT user_id, amount, status FROM robokassa_orders WHERE inv_id = ?', (inv_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {"user_id": row[0], "amount": row[1], "status": row[2]}
+    return None
