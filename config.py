@@ -8,7 +8,15 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN не задан")
     sys.exit(1)
+# Felo AI
+FELO_API_KEY = os.getenv("FELO_API_KEY", "YOUR_FELO_API_KEY")
+FELO_API_URL = os.getenv("FELO_API_URL", "https://openapi.felo.ai/v2/chat")
 
+# Replicate
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN", "YOUR_REPLICATE_TOKEN")
+
+# OpenAI (Sora 2)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_KEY")
 MASHA_API_KEY = os.getenv("MASHA_API_KEY")
 if not MASHA_API_KEY:
     print("❌ MASHA_API_KEY не задан")
