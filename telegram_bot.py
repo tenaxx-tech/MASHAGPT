@@ -22,11 +22,10 @@ from database import (
     get_weekly_image_count, increment_weekly_image_count
 )
 
-# Импорты для Robokassa
+# Robokassa
 from robokassa import get_payment_url, check_result_signature, check_success_signature
 from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
 
-# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -52,7 +51,6 @@ AWAIT_VIDEO_FOR_ANIMATE = 15
 AWAIT_IMAGE_FOR_ANIMATE = 16
 AWAIT_IMAGE_ONLY = 17
 
-# Новые состояния для популярного меню
 POPULAR_MENU = 18
 AWAIT_PROMPT_FOR_IMAGE = 19
 AWAIT_PHOTO_FOR_ANIMATE = 20
@@ -60,8 +58,8 @@ AWAIT_MODE_FOR_ANIMATE = 21
 AWAIT_PROMPT_FOR_ANIMATE = 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
 
-# Состояние для Robokassa
-AWAIT_ROBOKASSA_AMOUNT = 24
+# Состояние для Robokassa больше не нужно (используем callback)
+# AWAIT_ROBOKASSA_AMOUNT удалено
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
@@ -457,7 +455,8 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
-    # ------------------- Обработчики -------------------
+
+# ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
@@ -1694,55 +1693,64 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики для Robokassa -------------------
+# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатия кнопки 'Пополнить через Робокассу'"""
+    """Показывает кнопки с вариантами сумм для пополнения через Robokassa"""
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text(
-        "💰 Введите сумму пополнения в рублях (минимально 100 руб):\n\n"
-        "После ввода суммы я сгенерирую ссылку для оплаты через Robokassa.",
-        reply_markup=get_cancel_keyboard()
-    )
-    return AWAIT_ROBOKASSA_AMOUNT
 
-async def handle_robokassa_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пользователь ввёл сумму для пополнения через Robokassa"""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("100 ₽", callback_data="robokassa_100")],
+        [InlineKeyboardButton("250 ₽", callback_data="robokassa_250")],
+        [InlineKeyboardButton("500 ₽", callback_data="robokassa_500")],
+        [InlineKeyboardButton("1000 ₽", callback_data="robokassa_1000")],
+    ])
+    await query.message.reply_text(
+        "💰 Выберите сумму пополнения через Робокассу:",
+        reply_markup=keyboard
+    )
+    # Не меняем состояние, callback обрабатывается отдельно
+
+async def handle_robokassa_amount_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Создаёт заказ Robokassa на выбранную сумму"""
+    query = update.callback_query
+    await query.answer()
+
     user_id = update.effective_user.id
-    text = update.message.text.strip()
-    if text == "🔙 Главное меню":
-        context.user_data.clear()
-        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
-        return MAIN_MENU
+    data = query.data
+    if not data.startswith("robokassa_"):
+        return
 
     try:
-        amount = int(text)
-        if amount < 100:
-            await update.message.reply_text("Минимальная сумма 100 руб. Попробуйте ещё раз:", reply_markup=get_cancel_keyboard())
-            return AWAIT_ROBOKASSA_AMOUNT
-    except ValueError:
-        await update.message.reply_text("Пожалуйста, введите целое число (сумму в рублях):", reply_markup=get_cancel_keyboard())
-        return AWAIT_ROBOKASSA_AMOUNT
+        amount = int(data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.message.reply_text("❌ Неверная сумма.")
+        return
 
-    # Генерируем уникальный номер заказа (InvId)
+    if amount < 100:
+        await query.message.reply_text("Минимальная сумма 100 руб.")
+        return
+
     import time
     inv_id = int(time.time() * 100) % 10**9
     create_robokassa_order(inv_id, user_id, amount)
+
     link = get_payment_url(inv_id, amount, description=f"Пополнение баланса на {amount} промтов")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Перейти к оплате", url=link)]
     ])
-    await update.message.reply_text(
+
+    await query.message.reply_text(
         f"Счёт на сумму {amount} руб. создан.\n\n"
         f"Нажмите на кнопку ниже, чтобы оплатить через Robokassa.\n"
-        f"После оплаты ваш баланс пополнится автоматически в течение нескольких минут.\n\n"
+        f"После оплаты ваш баланс пополнится автоматически.\n\n"
         f"Номер заказа: `{inv_id}`",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-    return MAIN_MENU
-
-# ------------------- Обработчики платежей (Stars) -------------------
+    # Возвращаем главное меню (клавиатуру)
+    await query.message.reply_text("Вы можете продолжить работу:", reply_markup=get_main_keyboard())
+    # ------------------- Обработчики платежей (Stars) -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -1794,17 +1802,14 @@ async def run_web_server_with_robokassa(port, bot_instance):
         if order["status"] == "success":
             return web.Response(text=f"OK{inv_id}")
         
-        # Проверка суммы
         if abs(order["amount"] - out_sum) > 0.01:
             logger.error(f"Amount mismatch: {order['amount']} vs {out_sum}")
             return web.Response(text="amount mismatch", status=400)
         
-        # Начисляем баланс
         user_id = order["user_id"]
         add_balance(user_id, order["amount"])
         update_robokassa_order_status(inv_id, "success")
         
-        # Уведомляем пользователя в Telegram
         try:
             await bot_instance.send_message(
                 chat_id=user_id,
@@ -1819,7 +1824,6 @@ async def run_web_server_with_robokassa(port, bot_instance):
         """Success URL – пользователь вернулся после оплаты"""
         params = dict(request.query)
         logger.info(f"Robokassa success redirect: {params}")
-        # Необязательная проверка подписи (но можно включить)
         if not check_success_signature(params):
             return web.Response(text="bad sign", status=400)
         inv_id = params.get("InvId")
@@ -1876,7 +1880,11 @@ async def main_async():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
+                CallbackQueryHandler(inline_robokassa_topup, pattern="robokassa_topup"),
+                CallbackQueryHandler(handle_robokassa_amount_choice, pattern="^robokassa_\\d+$"),
+            ],
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
@@ -1885,31 +1893,48 @@ async def main_async():
             AVATAR_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_dialog)],
             AWAIT_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_input)],
-            AWAIT_FACE_SWAP_TARGET: [MessageHandler(filters.PHOTO, handle_face_swap_target),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)],
-            AWAIT_FACE_SWAP_SOURCE: [MessageHandler(filters.PHOTO, handle_face_swap_source),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)],
-            AWAIT_IMAGE_FOR_EDIT: [MessageHandler(filters.PHOTO, handle_edit_image),
-                                   MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)],
+            AWAIT_FACE_SWAP_TARGET: [
+                MessageHandler(filters.PHOTO, handle_face_swap_target),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)
+            ],
+            AWAIT_FACE_SWAP_SOURCE: [
+                MessageHandler(filters.PHOTO, handle_face_swap_source),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)
+            ],
+            AWAIT_IMAGE_FOR_EDIT: [
+                MessageHandler(filters.PHOTO, handle_edit_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)
+            ],
             AWAIT_PROMPT_FOR_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_prompt)],
-            AWAIT_IMAGE_FOR_AVATAR: [MessageHandler(filters.PHOTO, handle_avatar_image),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)],
-            AWAIT_AUDIO_FOR_AVATAR: [MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)],
-            AWAIT_VIDEO_FOR_ANIMATE: [MessageHandler(filters.VIDEO, handle_animate_video),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)],
-            AWAIT_IMAGE_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_image),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)],
-            AWAIT_IMAGE_ONLY: [MessageHandler(filters.PHOTO, handle_single_image),
-                               MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)],
+            AWAIT_IMAGE_FOR_AVATAR: [
+                MessageHandler(filters.PHOTO, handle_avatar_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)
+            ],
+            AWAIT_AUDIO_FOR_AVATAR: [
+                MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)
+            ],
+            AWAIT_VIDEO_FOR_ANIMATE: [
+                MessageHandler(filters.VIDEO, handle_animate_video),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)
+            ],
+            AWAIT_IMAGE_FOR_ANIMATE: [
+                MessageHandler(filters.PHOTO, handle_animate_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)
+            ],
+            AWAIT_IMAGE_ONLY: [
+                MessageHandler(filters.PHOTO, handle_single_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)
+            ],
             POPULAR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_popular_menu)],
             AWAIT_PROMPT_FOR_DEEPSEEK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_deepseek_prompt)],
             AWAIT_PROMPT_FOR_IMAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_to_image)],
-            AWAIT_PHOTO_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_photo_photo),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)],
+            AWAIT_PHOTO_FOR_ANIMATE: [
+                MessageHandler(filters.PHOTO, handle_animate_photo_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
+            ],
             AWAIT_MODE_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_mode)],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
-            AWAIT_ROBOKASSA_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_robokassa_amount)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -1919,7 +1944,7 @@ async def main_async():
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
-    app.add_handler(CallbackQueryHandler(inline_robokassa_topup, pattern="robokassa_topup"))
+    # ВАЖНО: больше не добавляем CallbackQueryHandler для robokassa_topup глобально (уже внутри conv_handler)
 
     port = int(os.getenv("PORT", 8080))
     asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
