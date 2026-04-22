@@ -7,16 +7,8 @@ from config import (
 )
 
 def get_payment_url(inv_id: int, amount: float, description: str = "Пополнение баланса") -> str:
-    """
-    Генерирует ссылку для оплаты через Robokassa
-    inv_id - уникальный номер заказа в вашей системе
-    amount - сумма в рублях
-    description - описание товара
-    """
-    if ROBOKASSA_TEST_MODE:
-        base_url = "https://test.robokassa.ru/Index.aspx"
-    else:
-        base_url = "https://merchant.robokassa.ru/Index.aspx"
+    # ВСЕГДА используем боевой домен, тестовый режим управляется параметром IsTest
+    base_url = "https://merchant.robokassa.ru/Index.aspx"
 
     params = {
         "MerchantLogin": ROBOKASSA_LOGIN,
@@ -35,15 +27,10 @@ def get_payment_url(inv_id: int, amount: float, description: str = "Пополн
     return f"{base_url}?{query}"
 
 def _make_signature(inv_id: int, amount: float, password: str) -> str:
-    """Формирует подпись (CRC) для Robokassa"""
     sign_str = f"{ROBOKASSA_LOGIN}:{amount:.2f}:{inv_id}:{password}"
     return hashlib.md5(sign_str.encode('utf-8')).hexdigest().upper()
 
 def check_result_signature(params: dict) -> bool:
-    """
-    Проверяет подпись входящего уведомления (Result URL).
-    Используется пароль №2.
-    """
     out_sum = params.get("OutSum")
     inv_id = params.get("InvId")
     signature = params.get("SignatureValue")
@@ -54,10 +41,6 @@ def check_result_signature(params: dict) -> bool:
     return signature.upper() == expected
 
 def check_success_signature(params: dict) -> bool:
-    """
-    Проверяет подпись для Success URL (перенаправление пользователя).
-    Используется пароль №1.
-    """
     out_sum = params.get("OutSum")
     inv_id = params.get("InvId")
     signature = params.get("SignatureValue")
