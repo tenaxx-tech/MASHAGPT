@@ -613,7 +613,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     character = random.choice(WELCOME_CHARACTERS)
     character_name = character["name"]
     character_prompt = character["prompt"]
-    model = "flux-2"
+    model = "gpt-image-1-5-image-to-image"
     
     # Отправляем статус "загружаем фото"
     await update.message.reply_text(
