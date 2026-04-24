@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import random
 from typing import List, Tuple
 from aiohttp import web
 
@@ -39,6 +40,60 @@ from PIL import Image
 PAID_IMAGE_PRICE = 2
 ADMIN_IDS = [466829859]   # Ваш Telegram user_id
 
+# ------------------- Персонажи для приветствия -------------------
+WELCOME_CHARACTERS = [
+    {
+        "name": "Джек Воробей",
+        "prompt": "a cinematic portrait of a person transformed into Captain Jack Sparrow from Pirates of the Caribbean, wearing pirate clothes, tricorn hat, beads in hair, eyeliner, charismatic smirk, dramatic lighting, movie poster style, highly detailed, 4K, fantasy art",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Железный человек",
+        "prompt": "a cinematic portrait of a person transformed into Tony Stark / Iron Man, wearing high-tech red and gold arc reactor suit, confident smirk, sleek hairstyle, holographic UI in background, Marvel movie style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Гарри Поттер",
+        "prompt": "a cinematic portrait of a person transformed into Harry Potter, wearing Gryffindor robe, round glasses, lightning scar on forehead, holding a wand, Hogwarts castle in background, magical atmosphere, fantasy movie style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Дарт Вейдер",
+        "prompt": "a cinematic portrait of a person transformed into Darth Vader, wearing iconic black helmet and armor, mechanical suit, imperial star destroyer background, dark dramatic lighting, Star Wars style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Дэдпул",
+        "prompt": "a cinematic portrait of a person transformed into Deadpool, wearing red and black superhero suit with mask, katanas on back, casual funny pose, comic book style, highly detailed, 4K, vibrant colors",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Ведьмак (Геральт)",
+        "prompt": "a cinematic portrait of a person transformed into Geralt of Rivia (The Witcher), white hair, cat-like yellow eyes, scar on face, wearing leather armor, two swords on back, dark fantasy atmosphere, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Лара Крофт",
+        "prompt": "a cinematic portrait of a person transformed into Lara Croft (Tomb Raider), tank top, combat pants, dual pistols, braided hair, jungle temple background, action adventure style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Джон Уик",
+        "prompt": "a cinematic portrait of a person transformed into John Wick, black suit, long dark hair, slight beard, holding a pistol, neon city lights background, dark dramatic lighting, action movie style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Тор",
+        "prompt": "a cinematic portrait of a person transformed into Thor (God of Thunder), blonde hair, blue eyes, wearing Asgardian armor, red cape, holding Mjolnir hammer, storm clouds and lightning background, Marvel movie style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    },
+    {
+        "name": "Капитан Америка",
+        "prompt": "a cinematic portrait of a person transformed into Captain America, wearing star-spangled suit, vibranium shield, determined expression, heroic pose, patriotic background, Marvel movie style, highly detailed, 4K",
+        "model": "nano-banana-pro"
+    }
+]
+
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
@@ -57,9 +112,6 @@ AWAIT_PHOTO_FOR_ANIMATE = 20
 AWAIT_MODE_FOR_ANIMATE = 21
 AWAIT_PROMPT_FOR_ANIMATE = 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
-
-# Состояние для Robokassa больше не нужно (используем callback)
-# AWAIT_ROBOKASSA_AMOUNT удалено
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
@@ -396,6 +448,63 @@ async def masha_media_generate(model: str, payload: dict):
             file_bytes = await resp.read()
     return file_bytes, media_url
 
+# ----- Новая функция для получения аватарки пользователя -----
+async def get_user_avatar_url(update: Update) -> str:
+    """Получает URL аватарки пользователя из Telegram"""
+    try:
+        photos = await update.effective_user.get_profile_photos(limit=1)
+        if photos.photos:
+            # Берём самое большое фото (последнее в списке)
+            file_id = photos.photos[0][-1].file_id
+            file = await update.get_bot().get_file(file_id)
+            return file.file_path
+    except Exception as e:
+        logger.error(f"Ошибка получения аватарки: {e}")
+    return None
+
+# ----- Функция генерации персонажа на основе аватарки -----
+async def generate_character_from_avatar(avatar_url: str, character_prompt: str, model: str) -> tuple:
+    """
+    Генерирует изображение персонажа на основе аватарки пользователя
+    Возвращает (bytes, url)
+    """
+    # Используем nano-banana-pro с image-to-image
+    payload = {
+        "prompt": character_prompt,
+        "inputUrls": [avatar_url],
+        "strength": 0.65,  # Баланс между аватаркой и персонажем
+        "aspectRatio": "1:1",
+        "resolution": "1K"
+    }
+    
+    task_id = await create_task(model, payload)
+    if not task_id:
+        raise Exception("Не удалось создать задачу")
+    
+    result = await wait_for_task(task_id)
+    if not result:
+        raise Exception("Не удалось получить результат")
+    
+    outputs = result.get("output", [])
+    if not outputs:
+        raise Exception("Нет output в ответе")
+    
+    if isinstance(outputs[0], dict):
+        media_url = outputs[0].get("url")
+    else:
+        media_url = outputs[0]
+    
+    if not media_url:
+        raise Exception("Нет URL в ответе")
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(media_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Ошибка скачивания: {resp.status}")
+            file_bytes = await resp.read()
+    
+    return file_bytes, media_url
+
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
         if image_url and " " in image_url:
@@ -411,9 +520,10 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         if prompt:
             payload["prompt"] = prompt
         return payload
+    if model == "nano-banana-pro" and image_url:
+        return {"prompt": prompt, "inputUrls": [image_url], "strength": 0.65, "aspectRatio": "1:1", "resolution": "1K"}
     payloads = {
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
-        "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
         "grok-imagine-text-to-image": {"prompt": prompt, "aspectRatio": "1:1"},
         "flux-2": {"prompt": prompt, "model": "pro", "aspectRatio": "1:1", "resolution": "1K"},
@@ -455,21 +565,121 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
-
-# ------------------- Обработчики -------------------
+    # ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
+    user = update.effective_user
+    first_name = user.first_name or "Пользователь"
+    
     update_user_activity(user_id)
+    
+    # Отправляем "печатает" для задержки
+    await update.message.reply_chat_action(ChatAction.TYPING)
+    
+    # Проверяем, не генерировали ли уже приветствие для этого пользователя
+    if context.user_data.get('welcome_generated'):
+        # Уже генерировали, просто показываем меню
+        await update.message.reply_text(
+            f"🤖 *С возвращением, {first_name}!*\n\n"
+            "✏️ Текст – бесплатно, без лимита\n"
+            "🖼 Изображения – бесплатно, 5 в неделю\n"
+            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+            "Выберите действие:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+    
+    # Получаем аватарку пользователя
+    avatar_url = await get_user_avatar_url(update)
+    
+    if not avatar_url:
+        # Нет аватарки - обычное приветствие без картинки
+        await update.message.reply_text(
+            f"🤖 *Привет, {first_name}!*\n\n"
+            "Установите аватарку в Telegram, чтобы я мог превратить вас в супергероя!\n\n"
+            "✏️ Текст – бесплатно, без лимита\n"
+            "🖼 Изображения – бесплатно, 5 в неделю\n"
+            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+            "Выберите действие:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+        context.user_data['welcome_generated'] = True
+        return MAIN_MENU
+    
+    # Выбираем случайного персонажа
+    character = random.choice(WELCOME_CHARACTERS)
+    character_name = character["name"]
+    character_prompt = character["prompt"]
+    model = character["model"]
+    
+    # Отправляем статус "загружаем фото"
     await update.message.reply_text(
-        "🤖 *Привет! Я бот с поддеркой ИИ Дмитрия Урецкого.*\n\n"
-        "✏️ Текст – бесплатно, без лимита\n"
-        "🖼 Изображения – бесплатно, 5 в неделю\n"
-        "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-        "Выберите действие:",
-        reply_markup=get_main_keyboard(),
+        f"🎨 *Превращаю вас в {character_name}...*\n\n"
+        f"Это может занять 10-20 секунд ⏳",
         parse_mode="Markdown"
     )
+    
+    # Генерируем изображение
+    stop_action = asyncio.Event()
+    action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_PHOTO, stop_action))
+    
+    try:
+        img_bytes, img_url = await generate_character_from_avatar(avatar_url, character_prompt, model)
+    except Exception as e:
+        logger.exception("Ошибка генерации приветственного персонажа")
+        await update.message.reply_text(
+            f"🤖 *Привет, {first_name}!*\n\n"
+            "Не удалось создать ваш аватар-персонаж, но бот работает!\n\n"
+            "✏️ Текст – бесплатно, без лимита\n"
+            "🖼 Изображения – бесплатно, 5 в неделю\n"
+            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+            "Выберите действие:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+        stop_action.set()
+        await action_task
+        context.user_data['welcome_generated'] = True
+        return MAIN_MENU
+    finally:
+        stop_action.set()
+        await action_task
+    
+    # Сжимаем и отправляем картинку
+    compressed = await compress_image(img_bytes)
+    
+    # Отправляем фото с подписью
+    try:
+        await update.message.reply_photo(
+            photo=io.BytesIO(compressed),
+            caption=f"✨ *Вот вы в образе {character_name}!*\n\n"
+                    f"🤖 *Добро пожаловать, {first_name}!*\n\n"
+                    "✏️ Текст – бесплатно, без лимита\n"
+                    "🖼 Изображения – бесплатно, 5 в неделю\n"
+                    "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+                    "Выберите действие:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки фото: {e}")
+        await update.message.reply_text(
+            f"🤖 *Привет, {first_name}!*\n\n"
+            "✏️ Текст – бесплатно, без лимита\n"
+            "🖼 Изображения – бесплатно, 5 в неделю\n"
+            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+            "Выберите действие:",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    
+    # Отправляем ссылку на оригинал (опционально)
+    await update.message.reply_text(f"📥 [Скачать оригинал изображения]({img_url})", parse_mode="Markdown")
+    
+    context.user_data['welcome_generated'] = True
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1709,7 +1919,6 @@ async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_T
         "💰 Выберите сумму пополнения через Робокассу:",
         reply_markup=keyboard
     )
-    # Не меняем состояние, callback обрабатывается отдельно
 
 async def handle_robokassa_amount_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Создаёт заказ Robokassa на выбранную сумму"""
@@ -1748,9 +1957,9 @@ async def handle_robokassa_amount_choice(update: Update, context: ContextTypes.D
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-    # Возвращаем главное меню (клавиатуру)
     await query.message.reply_text("Вы можете продолжить работу:", reply_markup=get_main_keyboard())
-    # ------------------- Обработчики платежей (Stars) -------------------
+
+# ------------------- Обработчики платежей (Stars) -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -1944,7 +2153,6 @@ async def main_async():
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
-    # ВАЖНО: больше не добавляем CallbackQueryHandler для robokassa_topup глобально (уже внутри conv_handler)
 
     port = int(os.getenv("PORT", 8080))
     asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
