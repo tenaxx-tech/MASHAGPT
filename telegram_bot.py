@@ -3,7 +3,6 @@ import io
 import json
 import logging
 import os
-import random
 from typing import List, Tuple
 from aiohttp import web
 
@@ -23,10 +22,7 @@ from database import (
     get_weekly_image_count, increment_weekly_image_count
 )
 
-# Robokassa
-from robokassa import get_payment_url, check_result_signature, check_success_signature
-from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
-
+# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -38,61 +34,6 @@ from PIL import Image
 
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2
-ADMIN_IDS = [466829859]   # Ваш Telegram user_id
-
-# ------------------- Персонажи для приветствия -------------------
-WELCOME_CHARACTERS = [
-    {
-        "name": "Джек Воробей",
-        "prompt": "a cinematic portrait of a person transformed into Captain Jack Sparrow from Pirates of the Caribbean, wearing pirate clothes, tricorn hat, beads in hair, eyeliner, charismatic smirk, dramatic lighting, movie poster style, highly detailed, 4K, fantasy art",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Железный человек",
-        "prompt": "a cinematic portrait of a person transformed into Tony Stark / Iron Man, wearing high-tech red and gold arc reactor suit, confident smirk, sleek hairstyle, holographic UI in background, Marvel movie style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Гарри Поттер",
-        "prompt": "a cinematic portrait of a person transformed into Harry Potter, wearing Gryffindor robe, round glasses, lightning scar on forehead, holding a wand, Hogwarts castle in background, magical atmosphere, fantasy movie style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Дарт Вейдер",
-        "prompt": "a cinematic portrait of a person transformed into Darth Vader, wearing iconic black helmet and armor, mechanical suit, imperial star destroyer background, dark dramatic lighting, Star Wars style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Дэдпул",
-        "prompt": "a cinematic portrait of a person transformed into Deadpool, wearing red and black superhero suit with mask, katanas on back, casual funny pose, comic book style, highly detailed, 4K, vibrant colors",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Ведьмак (Геральт)",
-        "prompt": "a cinematic portrait of a person transformed into Geralt of Rivia (The Witcher), white hair, cat-like yellow eyes, scar on face, wearing leather armor, two swords on back, dark fantasy atmosphere, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Лара Крофт",
-        "prompt": "a cinematic portrait of a person transformed into Lara Croft (Tomb Raider), tank top, combat pants, dual pistols, braided hair, jungle temple background, action adventure style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Джон Уик",
-        "prompt": "a cinematic portrait of a person transformed into John Wick, black suit, long dark hair, slight beard, holding a pistol, neon city lights background, dark dramatic lighting, action movie style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Тор",
-        "prompt": "a cinematic portrait of a person transformed into Thor (God of Thunder), blonde hair, blue eyes, wearing Asgardian armor, red cape, holding Mjolnir hammer, storm clouds and lightning background, Marvel movie style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    },
-    {
-        "name": "Капитан Америка",
-        "prompt": "a cinematic portrait of a person transformed into Captain America, wearing star-spangled suit, vibranium shield, determined expression, heroic pose, patriotic background, Marvel movie style, highly detailed, 4K",
-        "model": "nano-banana-pro"
-    }
-]
 
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
@@ -106,6 +47,7 @@ AWAIT_VIDEO_FOR_ANIMATE = 15
 AWAIT_IMAGE_FOR_ANIMATE = 16
 AWAIT_IMAGE_ONLY = 17
 
+# Новые состояния для популярного меню
 POPULAR_MENU = 18
 AWAIT_PROMPT_FOR_IMAGE = 19
 AWAIT_PHOTO_FOR_ANIMATE = 20
@@ -448,63 +390,6 @@ async def masha_media_generate(model: str, payload: dict):
             file_bytes = await resp.read()
     return file_bytes, media_url
 
-# ----- Новая функция для получения аватарки пользователя -----
-async def get_user_avatar_url(update: Update) -> str:
-    """Получает URL аватарки пользователя из Telegram"""
-    try:
-        photos = await update.effective_user.get_profile_photos(limit=1)
-        if photos.photos:
-            # Берём самое большое фото (последнее в списке)
-            file_id = photos.photos[0][-1].file_id
-            file = await update.get_bot().get_file(file_id)
-            return file.file_path
-    except Exception as e:
-        logger.error(f"Ошибка получения аватарки: {e}")
-    return None
-
-# ----- Функция генерации персонажа на основе аватарки -----
-async def generate_character_from_avatar(avatar_url: str, character_prompt: str, model: str) -> tuple:
-    """
-    Генерирует изображение персонажа на основе аватарки пользователя
-    Возвращает (bytes, url)
-    """
-    # Используем nano-banana-pro с image-to-image
-    payload = {
-        "prompt": character_prompt,
-        "inputUrls": [avatar_url],
-        "strength": 0.65,  # Баланс между аватаркой и персонажем
-        "aspectRatio": "1:1",
-        "resolution": "1K"
-    }
-    
-    task_id = await create_task(model, payload)
-    if not task_id:
-        raise Exception("Не удалось создать задачу")
-    
-    result = await wait_for_task(task_id)
-    if not result:
-        raise Exception("Не удалось получить результат")
-    
-    outputs = result.get("output", [])
-    if not outputs:
-        raise Exception("Нет output в ответе")
-    
-    if isinstance(outputs[0], dict):
-        media_url = outputs[0].get("url")
-    else:
-        media_url = outputs[0]
-    
-    if not media_url:
-        raise Exception("Нет URL в ответе")
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(media_url) as resp:
-            if resp.status != 200:
-                raise Exception(f"Ошибка скачивания: {resp.status}")
-            file_bytes = await resp.read()
-    
-    return file_bytes, media_url
-
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
         if image_url and " " in image_url:
@@ -520,10 +405,9 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         if prompt:
             payload["prompt"] = prompt
         return payload
-    if model == "nano-banana-pro" and image_url:
-        return {"prompt": prompt, "inputUrls": [image_url], "strength": 0.65, "aspectRatio": "1:1", "resolution": "1K"}
     payloads = {
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
+        "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
         "grok-imagine-text-to-image": {"prompt": prompt, "aspectRatio": "1:1"},
         "flux-2": {"prompt": prompt, "model": "pro", "aspectRatio": "1:1", "resolution": "1K"},
@@ -565,121 +449,21 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         "wan-2-2-animate-replace": {"videoUrl": image_url, "imageUrl": prompt, "duration": 5, "resolution": "720p"},
     }
     return payloads.get(model, None)
-    # ------------------- Обработчики -------------------
+
+# ------------------- Обработчики -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
-    user = update.effective_user
-    first_name = user.first_name or "Пользователь"
-    
     update_user_activity(user_id)
-    
-    # Отправляем "печатает" для задержки
-    await update.message.reply_chat_action(ChatAction.TYPING)
-    
-    # Проверяем, не генерировали ли уже приветствие для этого пользователя
-    if context.user_data.get('welcome_generated'):
-        # Уже генерировали, просто показываем меню
-        await update.message.reply_text(
-            f"🤖 *С возвращением, {first_name}!*\n\n"
-            "✏️ Текст – бесплатно, без лимита\n"
-            "🖼 Изображения – бесплатно, 5 в неделю\n"
-            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-            "Выберите действие:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    # Получаем аватарку пользователя
-    avatar_url = await get_user_avatar_url(update)
-    
-    if not avatar_url:
-        # Нет аватарки - обычное приветствие без картинки
-        await update.message.reply_text(
-            f"🤖 *Привет, {first_name}!*\n\n"
-            "Установите аватарку в Telegram, чтобы я мог превратить вас в супергероя!\n\n"
-            "✏️ Текст – бесплатно, без лимита\n"
-            "🖼 Изображения – бесплатно, 5 в неделю\n"
-            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-            "Выберите действие:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-        context.user_data['welcome_generated'] = True
-        return MAIN_MENU
-    
-    # Выбираем случайного персонажа
-    character = random.choice(WELCOME_CHARACTERS)
-    character_name = character["name"]
-    character_prompt = character["prompt"]
-    model = "gpt-image-1-5-image-to-image"
-    
-    # Отправляем статус "загружаем фото"
     await update.message.reply_text(
-        f"🎨 *Превращаю вас в {character_name}...*\n\n"
-        f"Это может занять 10-20 секунд ⏳",
+        "🤖 *Привет! Я бот с поддержью ИИ (MashaGPT).*\n\n"
+        "✏️ Текст – бесплатно, без лимита\n"
+        "🖼 Изображения – бесплатно, 5 в неделю\n"
+        "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
+        "Выберите действие:",
+        reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
-    
-    # Генерируем изображение
-    stop_action = asyncio.Event()
-    action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_PHOTO, stop_action))
-    
-    try:
-        img_bytes, img_url = await generate_character_from_avatar(avatar_url, character_prompt, model)
-    except Exception as e:
-        logger.exception("Ошибка генерации приветственного персонажа")
-        await update.message.reply_text(
-            f"🤖 *Привет, {first_name}!*\n\n"
-            "Не удалось создать ваш аватар-персонаж, но бот работает!\n\n"
-            "✏️ Текст – бесплатно, без лимита\n"
-            "🖼 Изображения – бесплатно, 5 в неделю\n"
-            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-            "Выберите действие:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-        stop_action.set()
-        await action_task
-        context.user_data['welcome_generated'] = True
-        return MAIN_MENU
-    finally:
-        stop_action.set()
-        await action_task
-    
-    # Сжимаем и отправляем картинку
-    compressed = await compress_image(img_bytes)
-    
-    # Отправляем фото с подписью
-    try:
-        await update.message.reply_photo(
-            photo=io.BytesIO(compressed),
-            caption=f"✨ *Вот вы в образе {character_name}!*\n\n"
-                    f"🤖 *Добро пожаловать, {first_name}!*\n\n"
-                    "✏️ Текст – бесплатно, без лимита\n"
-                    "🖼 Изображения – бесплатно, 5 в неделю\n"
-                    "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-                    "Выберите действие:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logger.error(f"Ошибка отправки фото: {e}")
-        await update.message.reply_text(
-            f"🤖 *Привет, {first_name}!*\n\n"
-            "✏️ Текст – бесплатно, без лимита\n"
-            "🖼 Изображения – бесплатно, 5 в неделю\n"
-            "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
-            "Выберите действие:",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-    
-    # Отправляем ссылку на оригинал (опционально)
-    await update.message.reply_text(f"📥 [Скачать оригинал изображения]({img_url})", parse_mode="Markdown")
-    
-    context.user_data['welcome_generated'] = True
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -696,40 +480,13 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
     img_left = max(0, 5 - img_used)
-    
-    text = (
-        f"👤 **Ваш ID:** `{user_id}`\n"
-        f"💰 **Баланс:** {bal} промтов\n"
-        f"🖼 **Бесплатные изображения:** {img_used}/5 использовано на этой неделе (осталось {img_left})\n"
-        f"💎 **Платное изображение** (после лимита): {PAID_IMAGE_PRICE} промтов\n\n"
-        f"📞 **По вопросам:** [Написать создателю](https://t.me/Dmitriy_Uretskiy)"
-    )
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Пополнить промты (Stars)", callback_data="topup")],
-        [InlineKeyboardButton("💳 Пополнить через Робокассу", callback_data="robokassa_topup")],
-        [InlineKeyboardButton("📞 Поддержка", url="https://t.me/Dmitriy_Uretskiy")]
-    ])
-    
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
-        return
-    try:
-        target_user_id = int(context.args[0])
-        amount = int(context.args[1])
-    except (IndexError, ValueError):
-        await update.message.reply_text("❌ Использование: /add_balance <user_id> <количество_промтов>\nПример: /add_balance 466829859 100")
-        return
-    add_balance(target_user_id, amount)
-    new_balance = get_user_balance(target_user_id)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]])
     await update.message.reply_text(
-        f"✅ Пользователю `{target_user_id}` начислено {amount} промтов.\n"
-        f"💰 Новый баланс: {new_balance} промтов.",
-        parse_mode="Markdown"
+        f"💰 Ваш баланс: {bal} промтов\n"
+        f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе\n"
+        f"   Осталось бесплатных: {img_left}\n"
+        f"💎 Платное изображение (после лимита): {PAID_IMAGE_PRICE} промтов",
+        reply_markup=keyboard
     )
 
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
@@ -810,7 +567,12 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Проверяем текстовые модели
+    # Определяем категорию по текущему состоянию (хранится в context.user_data)
+    # В этом обработчике мы будем определять модель по тексту кнопки.
+    # Для каждой категории (текст, изображения, видео, аудио, аватар) есть свой набор моделей.
+    # Мы проверим все возможные модели.
+
+    # Сначала проверим текстовые модели
     text_models = [
         ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
         ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
@@ -836,7 +598,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите ваш запрос:", reply_markup=get_cancel_keyboard())
             return DIALOG
 
-    # Проверяем модели изображений
+    # Проверяем модели изображений (бесплатные)
     image_models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
         ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
@@ -857,6 +619,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'image'
             context.user_data['media_category'] = 'image'
+            # Определяем тип ввода
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("image", "image"):
                 await update.message.reply_text(
@@ -890,7 +653,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return AWAIT_PROMPT
 
-    # Проверяем модели видео
+    # Проверяем модели видео (платные, но все они в списке MODEL_PRICES имеют ненулевую цену)
     video_models = [
         ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
         ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
@@ -920,6 +683,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'video'
             context.user_data['media_category'] = 'video'
+            # Проверяем тип ввода
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("video", "image"):
                 await update.message.reply_text(
@@ -1007,6 +771,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return AWAIT_PROMPT
 
+    # Если ничего не найдено
     await update.message.reply_text("Пожалуйста, выберите модель из списка или вернитесь в главное меню.", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
@@ -1073,7 +838,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MAIN_MENU
 
     used = 0
-    paid = False
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -1087,6 +851,8 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.", reply_markup=get_main_keyboard())
                 return MAIN_MENU
+        else:
+            paid = False
     elif price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -1276,6 +1042,7 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
+        # Используем deepseek-chat для генерации промта
         answer = await masha_text_generate(user_prompt, history, "deepseek-chat")
     finally:
         stop_action.set()
@@ -1528,7 +1295,7 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- Обработчики для face swap, edit, avatar, animate -------------------
+# ------------------- Обработчики для face swap, edit, avatar, animate (из вашего предыдущего кода) -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1903,63 +1670,7 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
-async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает кнопки с вариантами сумм для пополнения через Robokassa"""
-    query = update.callback_query
-    await query.answer()
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("100 ₽", callback_data="robokassa_100")],
-        [InlineKeyboardButton("250 ₽", callback_data="robokassa_250")],
-        [InlineKeyboardButton("500 ₽", callback_data="robokassa_500")],
-        [InlineKeyboardButton("1000 ₽", callback_data="robokassa_1000")],
-    ])
-    await query.message.reply_text(
-        "💰 Выберите сумму пополнения через Робокассу:",
-        reply_markup=keyboard
-    )
-
-async def handle_robokassa_amount_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Создаёт заказ Robokassa на выбранную сумму"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = update.effective_user.id
-    data = query.data
-    if not data.startswith("robokassa_"):
-        return
-
-    try:
-        amount = int(data.split("_")[1])
-    except (IndexError, ValueError):
-        await query.message.reply_text("❌ Неверная сумма.")
-        return
-
-    if amount < 100:
-        await query.message.reply_text("Минимальная сумма 100 руб.")
-        return
-
-    import time
-    inv_id = int(time.time() * 100) % 10**9
-    create_robokassa_order(inv_id, user_id, amount)
-
-    link = get_payment_url(inv_id, amount, description=f"Пополнение баланса на {amount} промтов")
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Перейти к оплате", url=link)]
-    ])
-
-    await query.message.reply_text(
-        f"Счёт на сумму {amount} руб. создан.\n\n"
-        f"Нажмите на кнопку ниже, чтобы оплатить через Robokassa.\n"
-        f"После оплаты ваш баланс пополнится автоматически.\n\n"
-        f"Номер заказа: `{inv_id}`",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    await query.message.reply_text("Вы можете продолжить работу:", reply_markup=get_main_keyboard())
-
-# ------------------- Обработчики платежей (Stars) -------------------
+# ------------------- Обработчики платежей -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -1982,99 +1693,17 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Веб-сервер для health и Robokassa -------------------
-async def run_web_server_with_robokassa(port, bot_instance):
-    """Веб-сервер для healthcheck и уведомлений Robokassa"""
-    web_app = web.Application()
-    
+# ------------------- Health check сервер -------------------
+async def run_health_check_server(port):
+    app_web = web.Application()
     async def health(request):
         return web.Response(text="OK")
-    
-    async def robokassa_result(request):
-        """Обработка Result URL (техническое уведомление)"""
-        data = await request.post()
-        params = dict(data)
-        logger.info(f"Robokassa result notification: {params}")
-        
-        if not check_result_signature(params):
-            logger.error("Invalid signature for result notification")
-            return web.Response(text="bad sign", status=400)
-        
-        inv_id = int(params.get("InvId"))
-        out_sum = float(params.get("OutSum"))
-        order = get_robokassa_order(inv_id)
-        
-        if not order:
-            logger.error(f"Order {inv_id} not found")
-            return web.Response(text=f"Order {inv_id} not found", status=404)
-        
-        if order["status"] == "success":
-            return web.Response(text=f"OK{inv_id}")
-        
-        if abs(order["amount"] - out_sum) > 0.01:
-            logger.error(f"Amount mismatch: {order['amount']} vs {out_sum}")
-            return web.Response(text="amount mismatch", status=400)
-        
-        user_id = order["user_id"]
-        add_balance(user_id, order["amount"])
-        update_robokassa_order_status(inv_id, "success")
-        
-        try:
-            await bot_instance.send_message(
-                chat_id=user_id,
-                text=f"✅ Ваш баланс пополнен на {order['amount']} промтов через Robokassa!"
-            )
-        except Exception as e:
-            logger.error(f"Не удалось уведомить пользователя {user_id}: {e}")
-        
-        return web.Response(text=f"OK{inv_id}")
-    
-    async def robokassa_success(request):
-        """Success URL – пользователь вернулся после оплаты"""
-        params = dict(request.query)
-        logger.info(f"Robokassa success redirect: {params}")
-        if not check_success_signature(params):
-            return web.Response(text="bad sign", status=400)
-        inv_id = params.get("InvId")
-        html = f"""
-        <html>
-        <head><title>Оплата успешна</title></head>
-        <body>
-            <h1>Спасибо за оплату!</h1>
-            <p>Ваш заказ №{inv_id} оплачен. Баланс пополнен.</p>
-            <p>Вы можете вернуться в телеграм-бота и продолжить пользоваться сервисом.</p>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html")
-    
-    async def robokassa_fail(request):
-        """Fail URL – пользователь отменил оплату или ошибка"""
-        params = dict(request.query)
-        logger.info(f"Robokassa fail redirect: {params}")
-        inv_id = params.get("InvId")
-        html = f"""
-        <html>
-        <head><title>Оплата не удалась</title></head>
-        <body>
-            <h1>Оплата не была завершена</h1>
-            <p>Заказ №{inv_id}. Если вы не оплачивали, попробуйте ещё раз.</p>
-            <p>Вернитесь в бота и создайте новый счёт.</p>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html")
-    
-    web_app.router.add_get('/health', health)
-    web_app.router.add_post('/robokassa/result', robokassa_result)
-    web_app.router.add_get('/robokassa/success', robokassa_success)
-    web_app.router.add_get('/robokassa/fail', robokassa_fail)
-    
-    runner = web.AppRunner(web_app)
+    app_web.router.add_get('/health', health)
+    runner = web.AppRunner(app_web)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logger.info(f"Web server (health + robokassa) запущен на порту {port}")
+    logger.info(f"Health check сервер запущен на порту {port}")
     await asyncio.Event().wait()
 
 # ------------------- Запуск -------------------
@@ -2089,11 +1718,7 @@ async def main_async():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
-                CallbackQueryHandler(inline_robokassa_topup, pattern="robokassa_topup"),
-                CallbackQueryHandler(handle_robokassa_amount_choice, pattern="^robokassa_\\d+$"),
-            ],
+            MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
@@ -2102,46 +1727,28 @@ async def main_async():
             AVATAR_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_dialog)],
             AWAIT_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_input)],
-            AWAIT_FACE_SWAP_TARGET: [
-                MessageHandler(filters.PHOTO, handle_face_swap_target),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)
-            ],
-            AWAIT_FACE_SWAP_SOURCE: [
-                MessageHandler(filters.PHOTO, handle_face_swap_source),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)
-            ],
-            AWAIT_IMAGE_FOR_EDIT: [
-                MessageHandler(filters.PHOTO, handle_edit_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)
-            ],
+            AWAIT_FACE_SWAP_TARGET: [MessageHandler(filters.PHOTO, handle_face_swap_target),
+                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)],
+            AWAIT_FACE_SWAP_SOURCE: [MessageHandler(filters.PHOTO, handle_face_swap_source),
+                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)],
+            AWAIT_IMAGE_FOR_EDIT: [MessageHandler(filters.PHOTO, handle_edit_image),
+                                   MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)],
             AWAIT_PROMPT_FOR_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_prompt)],
-            AWAIT_IMAGE_FOR_AVATAR: [
-                MessageHandler(filters.PHOTO, handle_avatar_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)
-            ],
-            AWAIT_AUDIO_FOR_AVATAR: [
-                MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)
-            ],
-            AWAIT_VIDEO_FOR_ANIMATE: [
-                MessageHandler(filters.VIDEO, handle_animate_video),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)
-            ],
-            AWAIT_IMAGE_FOR_ANIMATE: [
-                MessageHandler(filters.PHOTO, handle_animate_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)
-            ],
-            AWAIT_IMAGE_ONLY: [
-                MessageHandler(filters.PHOTO, handle_single_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)
-            ],
+            AWAIT_IMAGE_FOR_AVATAR: [MessageHandler(filters.PHOTO, handle_avatar_image),
+                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)],
+            AWAIT_AUDIO_FOR_AVATAR: [MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
+                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)],
+            AWAIT_VIDEO_FOR_ANIMATE: [MessageHandler(filters.VIDEO, handle_animate_video),
+                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)],
+            AWAIT_IMAGE_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_image),
+                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)],
+            AWAIT_IMAGE_ONLY: [MessageHandler(filters.PHOTO, handle_single_image),
+                               MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)],
             POPULAR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_popular_menu)],
             AWAIT_PROMPT_FOR_DEEPSEEK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_deepseek_prompt)],
             AWAIT_PROMPT_FOR_IMAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_to_image)],
-            AWAIT_PHOTO_FOR_ANIMATE: [
-                MessageHandler(filters.PHOTO, handle_animate_photo_photo),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
-            ],
+            AWAIT_PHOTO_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_photo_photo),
+                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)],
             AWAIT_MODE_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_mode)],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
         },
@@ -2149,13 +1756,12 @@ async def main_async():
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("clear", clear_dialog))
-    app.add_handler(CommandHandler("add_balance", add_balance_command))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
     port = int(os.getenv("PORT", 8080))
-    asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
+    asyncio.create_task(run_health_check_server(port))
 
     logger.info("Запуск бота в режиме polling")
     await app.initialize()
