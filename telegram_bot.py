@@ -810,14 +810,13 @@ async def main_async():
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
-                CallbackQueryHandler(robokassa_topup_callback, pattern="robokassa_topup"),
-                CallbackQueryHandler(robokassa_amount_callback, pattern="^robokassa_\\d+$"),
-            ],
+    entry_points=[CommandHandler("start", start)],
+    states={
+        MAIN_MENU: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
+            CallbackQueryHandler(robokassa_topup_callback, pattern="robokassa_topup"),
+            CallbackQueryHandler(robokassa_amount_callback, pattern="^robokassa_\\d+$"),
+        ],
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
