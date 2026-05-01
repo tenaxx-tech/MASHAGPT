@@ -1,11 +1,9 @@
 import asyncio
 import io
-import json
 import logging
 import os
 from typing import List, Tuple
 
-import aiohttp
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -21,9 +19,20 @@ from database import (
     get_user_balance, add_balance, deduct_balance,
     get_weekly_image_count, increment_weekly_image_count
 )
-from bothub_client import bothub_text_generate, bothub_image_generate, bothub_video_generate, bothub_animate_photo, bothub_image_edit
+from bothub_client import (
+    bothub_text_generate,
+    bothub_image_generate,
+    bothub_video_generate,
+    bothub_animate_photo,
+    bothub_image_edit,
+    bothub_remove_background,
+    bothub_upscale,
+    bothub_face_swap,
+    bothub_avatar,
+    bothub_audio_generate
+)
 
-# Robokassa
+# Robokassa (опционально)
 from robokassa import get_payment_url, check_result_signature, check_success_signature
 from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
 
@@ -36,58 +45,59 @@ logger = logging.getLogger(__name__)
 
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2
-ADMIN_IDS = [466829859]   # Ваш Telegram user_id
+ADMIN_IDS = [466829859]   # замените на свой user_id
 
-# ------------------- Состояния -------------------
-MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, DIALOG, AWAIT_PROMPT = range(6)
-AWAIT_IMAGE_FOR_EDIT = 11
-AWAIT_PROMPT_FOR_EDIT = 12
-AWAIT_IMAGE_ONLY = 17
-POPULAR_MENU = 18
-AWAIT_PROMPT_FOR_IMAGE = 19
-AWAIT_PHOTO_FOR_ANIMATE = 20
-AWAIT_MODE_FOR_ANIMATE = 21
-AWAIT_PROMPT_FOR_ANIMATE = 22
-AWAIT_PROMPT_FOR_DEEPSEEK = 23
+# Состояния ConversationHandler
+MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
+AWAIT_FACE_SWAP_TARGET, AWAIT_FACE_SWAP_SOURCE, AWAIT_IMAGE_FOR_EDIT, AWAIT_PROMPT_FOR_EDIT = 9, 10, 11, 12
+AWAIT_IMAGE_FOR_AVATAR, AWAIT_AUDIO_FOR_AVATAR, AWAIT_VIDEO_FOR_ANIMATE, AWAIT_IMAGE_FOR_ANIMATE, AWAIT_IMAGE_ONLY = 13, 14, 15, 16, 17
+POPULAR_MENU, AWAIT_PROMPT_FOR_IMAGE, AWAIT_PHOTO_FOR_ANIMATE, AWAIT_MODE_FOR_ANIMATE, AWAIT_PROMPT_FOR_ANIMATE, AWAIT_PROMPT_FOR_DEEPSEEK = 18, 19, 20, 21, 22, 23
 
-# ------------------- Выбор моделей (основное меню: цена ниже) -------------------
-# Текстовые модели (бесплатные / дешёвые)
+# ------------------- Текстовые модели (Bothub OpenAI) -------------------
 TEXT_MODELS = {
-    "deepseek-chat": "DeepSeek Chat",
-    "gpt-4o-mini": "GPT-4o mini",
-    "gemini-2.0-flash": "Gemini 2.0 Flash",
+    "gpt-4o-mini": "GPT-4o mini (бесплатно)",
+    "deepseek-chat": "DeepSeek Chat (бесплатно)",
+    "gpt-4o": "GPT-4o (платно: 10 промтов)",
+    "claude-sonnet-4-5": "Claude Sonnet 4.5 (платно: 15 промтов)",
+    "gemini-2.0-flash": "Gemini 2.0 Flash (бесплатно)",
 }
-# Модели изображений (дешёвые)
+TEXT_MODEL_PRICES = {"gpt-4o": 10, "claude-sonnet-4-5": 15}
+for m in TEXT_MODELS:
+    if m not in TEXT_MODEL_PRICES:
+        TEXT_MODEL_PRICES[m] = 0
+
+# ------------------- Модели изображений (Bothub Replicate) -------------------
 IMAGE_MODELS = {
-    "flux-schnell": "Flux Schnell (быстро/дёшево)",
+    "flux-schnell": "Flux Schnell (самый дешёвый, качество среднее)",
+    "flux-1.1-pro": "Flux 1.1 Pro (качество/цена)",
+    "stable-diffusion-3.5-large-turbo": "SD 3.5 Large Turbo (быстрый)",
+    "flux-1.1-pro-ultra": "Flux Ultra (максимальное качество, дороже)",
 }
-# Модели видео (дешёвые)
+IMAGE_MODEL_PRICES = {"flux-schnell": 0, "flux-1.1-pro": 0, "stable-diffusion-3.5-large-turbo": 0, "flux-1.1-pro-ultra": 2}
+
+# ------------------- Модели видео (Bothub Replicate) -------------------
 VIDEO_MODELS = {
-    "veo-3-fast": "Veo 3 Fast (дёшево)",
+    "veo-3-fast": "Veo 3 Fast (дешёвый, 1 промт)",
+    "sora-2": "Sora 2 (3 промта)",
+    "kling-v3-video": "Kling v3 (6 промтов)",
 }
+VIDEO_MODEL_PRICES = {"veo-3-fast": 1, "sora-2": 3, "kling-v3-video": 6}
 
-# ------------------- Популярное меню (качество выше) -------------------
-POPULAR_TEXT_MODEL = "gpt-4o"          # качественный текст
-POPULAR_IMAGE_MODEL = "flux-1.1-pro-ultra"   # качественное изображение
-POPULAR_EDIT_MODEL = "flux-kontext-pro"      # редактирование изображения
-POPULAR_ANIMATE_MODEL = "grok-imagine-image-to-video"  # оживление фото
+# ------------------- Специальные модели для популярного меню -------------------
+POPULAR_TEXT_MODEL = "gpt-4o"               # качественный текст
+POPULAR_IMAGE_MODEL = "flux-1.1-pro-ultra" # лучшее качество
+POPULAR_EDIT_MODEL = "flux-kontext-pro"    # редактирование
+POPULAR_ANIMATE_MODEL = "grok-imagine-image-to-video"
 
-# Цены (в промтах) для платных действий
-MODEL_PRICES = {
-    "veo-3-fast": 1,
-    "flux-1.1-pro-ultra": 2,
-    "flux-kontext-pro": 2,
-    "grok-imagine-image-to-video": 1,
-}
-# Для текстовых и бесплатных изображений цена 0
-
-# ------------------- Клавиатуры -------------------
+# ------------------- Клавиатуры (полный набор) -------------------
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton("✏️ Генерация текста")],
         [KeyboardButton("🖼 Генерация изображения")],
         [KeyboardButton("🎬 Генерация видео")],
         [KeyboardButton("⭐ Популярные модели генерации")],
+        [KeyboardButton("🎵 Аудио (озвучка, эффекты)")],
+        [KeyboardButton("🤖 Аватар / анимация")],
         [KeyboardButton("🧹 Сбросить диалог")],
         [KeyboardButton("💰 Мой баланс")],
         [KeyboardButton("⭐ Пополнить промты")],
@@ -101,7 +111,9 @@ def get_popular_menu_keyboard():
         [KeyboardButton("🖼️ 3. Оживить фото")],
         [KeyboardButton("🎨 4. Текст в изображение")],
         [KeyboardButton("✏️ 5. Изменить изображение по описанию")],
-        # остальные пункты удалены (нет моделей в bothub)
+        [KeyboardButton("🧹 6. Удалить фон")],
+        [KeyboardButton("✨ 7. Улучшить качество")],
+        [KeyboardButton("🔄 8. Заменить лицо")],
         [KeyboardButton("🔙 Главное меню")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -125,6 +137,16 @@ def get_video_models_keyboard():
     for model_id, label in VIDEO_MODELS.items():
         keyboard.append([KeyboardButton(label)])
     keyboard.append([KeyboardButton("🔙 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_audio_models_keyboard():
+    # Временно недоступно
+    keyboard = [[KeyboardButton("🔙 Главное меню")]]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+def get_avatar_models_keyboard():
+    # Временно недоступно
+    keyboard = [[KeyboardButton("🔙 Главное меню")]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 def get_cancel_keyboard():
@@ -171,7 +193,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "🤖 *Привет! Я бот на базі Bothub API.*\n\n"
         "✏️ Текст – бесплатно, без лимита\n"
         "🖼 Изображення – бесплатно, 5 в неделю, далее платно\n"
-        "🎬 Видео – платно (токены)\n\n"
+        "🎬 Видео – платно (промты)\n"
+        "🎵 Аудио, 🤖 Аватар – временно недоступны\n\n"
         "Выберите действие:",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
@@ -195,7 +218,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"👤 **Ваш ID:** `{user_id}`\n"
         f"💰 **Баланс:** {bal} промтов\n"
-        f"🖼 **Бесплатные изображения:** {img_used}/5 использовано на этой неделе (осталось {img_left})\n"
+        f"🖼 **Бесплатные изображения:** {img_used}/5 на этой неделе (осталось {img_left})\n"
         f"💎 **Платное изображение** (после лимита): {PAID_IMAGE_PRICE} промтов\n\n"
         f"📞 **По вопросам:** [Написать создателю](https://t.me/Dmitriy_Uretskiy)"
     )
@@ -209,38 +232,29 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
+        await update.message.reply_text("⛔ У вас нет прав.")
         return
     try:
         target_user_id = int(context.args[0])
         amount = int(context.args[1])
     except (IndexError, ValueError):
-        await update.message.reply_text("❌ Использование: /add_balance <user_id> <количество_промтов>")
+        await update.message.reply_text("❌ Используйте: /add_balance <user_id> <количество>")
         return
     add_balance(target_user_id, amount)
     new_balance = get_user_balance(target_user_id)
-    await update.message.reply_text(
-        f"✅ Пользователю `{target_user_id}` начислено {amount} промтов.\n"
-        f"💰 Новый баланс: {new_balance} промтов.",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"✅ Пользователю `{target_user_id}` начислено {amount} промтов. Новый баланс: {new_balance}.", parse_mode="Markdown")
 
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
         chat_id = update.effective_chat.id
-    title = "Пополнение баланса"
-    description = "100 звёзд = 100 промтов"
-    payload = "topup_100"
-    currency = "XTR"
-    prices = [LabeledPrice(label="100 звёзд", amount=100)]
     await context.bot.send_invoice(
         chat_id=chat_id,
-        title=title,
-        description=description,
-        payload=payload,
+        title="Пополнение баланса",
+        description="100 звёзд = 100 промтов",
+        payload="topup_100",
         provider_token="",
-        currency=currency,
-        prices=prices,
+        currency="XTR",
+        prices=[LabeledPrice(label="100 звёзд", amount=100)],
         start_parameter="topup",
         need_name=False,
         need_phone_number=False,
@@ -249,7 +263,7 @@ async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE,
         is_flexible=False
     )
 
-# ------------------- Обработчик главного меню -------------------
+# ------------------- Главное меню -------------------
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "✏️ Генерация текста":
@@ -268,6 +282,12 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data.clear()
         await update.message.reply_text("Выберите нужную функцию:", reply_markup=get_popular_menu_keyboard())
         return POPULAR_MENU
+    elif text == "🎵 Аудио (озвучка, эффекты)":
+        await update.message.reply_text("🎵 Функция временно недоступна в Bothub. Пожалуйста, используйте другие функции.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    elif text == "🤖 Аватар / анимация":
+        await update.message.reply_text("🤖 Функция временно недоступна в Bothub. Используйте «Оживить фото» в популярном меню.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
     elif text == "🧹 Сбросить диалог":
         return await clear_dialog(update, context)
     elif text == "💰 Мой баланс":
@@ -291,37 +311,37 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Текстовые модели
+    # Текст
     for model_id, label in TEXT_MODELS.items():
         if text.strip() == label:
             context.user_data['selected_model'] = model_id
-            context.user_data['model_price'] = 0
+            context.user_data['model_price'] = TEXT_MODEL_PRICES.get(model_id, 0)
             context.user_data['media_category'] = 'text'
-            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите ваш запрос:", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите запрос:", reply_markup=get_cancel_keyboard())
             return DIALOG
 
-    # Модели изображений
+    # Изображения
     for model_id, label in IMAGE_MODELS.items():
         if text.strip() == label:
             context.user_data['selected_model'] = model_id
-            context.user_data['model_price'] = 0
+            context.user_data['model_price'] = IMAGE_MODEL_PRICES.get(model_id, 0)
             context.user_data['media_category'] = 'image'
-            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите текстовое описание:", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите описание:", reply_markup=get_cancel_keyboard())
             return AWAIT_PROMPT
 
-    # Модели видео
+    # Видео
     for model_id, label in VIDEO_MODELS.items():
         if text.strip() == label:
             context.user_data['selected_model'] = model_id
-            context.user_data['model_price'] = MODEL_PRICES.get(model_id, 0)
+            context.user_data['model_price'] = VIDEO_MODEL_PRICES.get(model_id, 0)
             context.user_data['media_category'] = 'video'
-            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите текстовое описание видео:", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите описание видео:", reply_markup=get_cancel_keyboard())
             return AWAIT_PROMPT
 
     await update.message.reply_text("Пожалуйста, выберите модель из списка.", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчик диалога (текст) -------------------
+# ------------------- Диалог (текст) -------------------
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str = None) -> int:
     user_id = update.effective_user.id
     if user_message is None:
@@ -331,7 +351,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    model = context.user_data.get('selected_model', 'deepseek-chat')
+    model = context.user_data.get('selected_model', 'gpt-4o-mini')
     price = context.user_data.get('model_price', 0)
 
     save_message(user_id, "user", user_message)
@@ -350,7 +370,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         answer = await bothub_text_generate(user_message, history, model)
     except Exception as e:
         answer = None
-        logger.exception("Ошибка генерации текста")
+        logger.exception("Текстовая ошибка")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
         if price > 0:
             add_balance(user_id, price)
@@ -363,12 +383,12 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         await send_long_message(update, answer)
         save_message(user_id, "assistant", answer)
     else:
-        await update.message.reply_text("❌ Пустой ответ от сервера.")
+        await update.message.reply_text("❌ Пустой ответ.")
         if price > 0:
             add_balance(user_id, price)
     return DIALOG
 
-# ------------------- Обработчик для одношаговой генерации (промпт) -------------------
+# ------------------- Обработчик для одношаговой генерации (изображение или видео) -------------------
 async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     model = context.user_data.get('selected_model')
@@ -385,7 +405,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Пожалуйста, введите текст запроса.", reply_markup=get_cancel_keyboard())
         return AWAIT_PROMPT
 
-    # Проверка лимита для бесплатных изображений
+    # Проверка баланса и лимитов
     used = 0
     paid = False
     if category == "image" and price == 0:
@@ -448,7 +468,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики популярного меню -------------------
+# ------------------- Популярное меню (качественные модели) -------------------
 async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "🔙 Главное меню":
@@ -473,14 +493,14 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif text == "🎨 4. Текст в изображение":
         context.user_data['selected_model'] = POPULAR_IMAGE_MODEL
-        context.user_data['model_price'] = MODEL_PRICES.get(POPULAR_IMAGE_MODEL, 0)
+        context.user_data['model_price'] = IMAGE_MODEL_PRICES.get(POPULAR_IMAGE_MODEL, 0)
         context.user_data['media_category'] = 'image'
         await update.message.reply_text("Введите описание изображения:", reply_markup=get_cancel_keyboard())
         return AWAIT_PROMPT_FOR_IMAGE
 
     elif text == "✏️ 5. Изменить изображение по описанию":
         context.user_data['selected_model'] = POPULAR_EDIT_MODEL
-        context.user_data['model_price'] = MODEL_PRICES.get(POPULAR_EDIT_MODEL, 0)
+        context.user_data['model_price'] = 2  # цена как у flux-1.1-pro-ultra
         context.user_data['media_category'] = 'image'
         await update.message.reply_text(
             "🔹 Редактирование изображения\n\n"
@@ -491,11 +511,23 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return AWAIT_IMAGE_FOR_EDIT
 
+    elif text == "🧹 6. Удалить фон":
+        await update.message.reply_text("⛔ Удаление фона временно недоступно в Bothub. Рекомендуем сгенерировать новое изображение с нужным фоном.", reply_markup=get_popular_menu_keyboard())
+        return POPULAR_MENU
+
+    elif text == "✨ 7. Улучшить качество":
+        await update.message.reply_text("⛔ Улучшение качества (апскейл) временно недоступно в Bothub.", reply_markup=get_popular_menu_keyboard())
+        return POPULAR_MENU
+
+    elif text == "🔄 8. Заменить лицо":
+        await update.message.reply_text("⛔ Замена лица временно недоступна в Bothub.", reply_markup=get_popular_menu_keyboard())
+        return POPULAR_MENU
+
     else:
         await update.message.reply_text("Пожалуйста, выберите пункт из меню.", reply_markup=get_popular_menu_keyboard())
         return POPULAR_MENU
 
-# ----- Генерация промтов через качественную текстовую модель -----
+# ------------------- Генерация промтов через текстовую модель (качественную) -------------------
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -515,7 +547,6 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Ошибка.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Используем качественную текстовую модель
     fake_history = [("system", system_prompt)]
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
@@ -534,7 +565,7 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.pop('pending_action', None)
     return POPULAR_MENU
 
-# ----- Текст в изображение (качественное) -----
+# ------------------- Текст в изображение (качественное) -------------------
 async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     prompt = update.message.text
@@ -544,9 +575,8 @@ async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYP
         return MAIN_MENU
 
     model = POPULAR_IMAGE_MODEL
-    price = MODEL_PRICES.get(model, 0)
+    price = IMAGE_MODEL_PRICES.get(model, 0)
 
-    # Лимит и списание
     used = get_weekly_image_count(user_id)
     paid = False
     if used >= 5:
@@ -573,7 +603,7 @@ async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         result_bytes, media_url = await bothub_image_generate(prompt, model)
     except Exception as e:
-        logger.exception("Текст в изображение")
+        logger.exception("Ошибка генерации изображения")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
         if paid or price > 0:
             add_balance(user_id, price if price > 0 else PAID_IMAGE_PRICE)
@@ -598,7 +628,7 @@ async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ----- Оживление фото -----
+# ------------------- Оживление фото -------------------
 async def handle_animate_photo_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         if update.message.text == "🔙 Главное меню":
@@ -655,8 +685,7 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     prompt = None if text.lower() == "пропустить" else text
 
-    # Списание средств (1 промт)
-    price = MODEL_PRICES.get(POPULAR_ANIMATE_MODEL, 1)
+    price = 1  # цена для анимации
     if get_user_balance(user_id) < price:
         await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
         return MAIN_MENU
@@ -689,7 +718,7 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ----- Редактирование изображения по описанию -----
+# ------------------- Редактирование изображения по описанию -------------------
 async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         if update.message.text == "🔙 Главное меню":
@@ -725,7 +754,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MAIN_MENU
 
     model = POPULAR_EDIT_MODEL
-    price = MODEL_PRICES.get(model, 0)
+    price = 2
     user_id = update.effective_user.id
 
     used = get_weekly_image_count(user_id)
@@ -791,10 +820,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     user_id = update.effective_user.id
     amount = update.message.successful_payment.total_amount
     add_balance(user_id, amount)
-    await update.message.reply_text(
-        f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.",
-        reply_markup=get_main_keyboard()
-    )
+    await update.message.reply_text(f"✅ Баланс пополнен на {amount} промтов! Теперь у вас {get_user_balance(user_id)} промтов.", reply_markup=get_main_keyboard())
 
 async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -862,7 +888,7 @@ async def main_async():
         states={
             MAIN_MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
-                CallbackQueryHandler(lambda u,c: None, pattern="robokassa_topup"),  # упрощённо
+                CallbackQueryHandler(lambda u,c: None, pattern="robokassa_topup"),  # заглушка будет позже
                 CallbackQueryHandler(lambda u,c: None, pattern="^robokassa_\\d+$"),
             ],
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
