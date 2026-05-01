@@ -462,7 +462,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     update_user_activity(user_id)
     await update.message.reply_text(
-        "🤖 *Привет! Я бот с поддержкой ИИ Дмитрия Урецкого.*\n\n"
+        "🤖 *Привет! Я бот с поддеркой ИИ Дмитрия Урецкого.*\n\n"
         "✏️ Текст – бесплатно, без лимита\n"
         "🖼 Изображения – бесплатно, 5 в неделю\n"
         "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
