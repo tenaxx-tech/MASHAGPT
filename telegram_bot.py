@@ -1006,6 +1006,13 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return POPULAR_MENU
 
 # ------------------- Обработчики для пунктов популярного меню -------------------
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import json
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -1015,68 +1022,79 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
         return MAIN_MENU
 
     action = context.user_data.get('pending_action')
+    
     if action == 'prompt_image':
         system_prompt = (
-            "ТЫ — ЭКСПЕРТ ПО ПРОМТАМ ДЛЯ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ. "
-            "СОЗДАЙ ПРОМТ В ДВУХ СТИЛЯХ НА ВЫБОР ПОЛЬЗОВАТЕЛЯ. "
-            "ПРАВИЛА ДЛЯ ОБОИХ СТИЛЕЙ:\n"
-            "1. ТОЛЬКО РУССКИЙ ЯЗЫК, ТОЛЬКО ЗАГЛАВНЫЕ БУКВЫ.\n"
-            "2. КОРОТКИЕ ФРАЗЫ, БЕЗ ЛИШНИХ ОБЪЯСНЕНИЙ.\n"
-            "3. ОБЯЗАТЕЛЬНО УКАЖИ ДВИЖЕНИЕ, СВЕТ, ЦВЕТОВУЮ ГАММУ, АТМОСФЕРУ.\n"
-            "4. ЕСЛИ НУЖЕН ТЕКСТ НА ИЗОБРАЖЕНИИ — ОПИШИ ЕГО ПОЗИЦИЮ, СТИЛЬ, ЦВЕТ, ШРИФТ.\n"
-            "5. ЛИЦО ГЛАВНОГО ГЕРОЯ — КАК НА ЗАГРУЖЕННОМ ФОТО (НЕ ИЗМЕНЯТЬ ЧЕРТЫ).\n"
-            "6. ФОРМАТ: 16:9 ИЛИ 9:16, ВЫСОКОЕ РАЗРЕШЕНИЕ (8K), ФОТОРЕАЛИЗМ.\n\n"
-            "=== СТИЛЬ 1: КЛАССИЧЕСКИЙ (ДИНАМИЧНЫЙ, РЕАЛИСТИЧНЫЙ, С КРУПНЫМ ТЕКСТОМ) ===\n"
-            "ОПИШИ СЦЕНУ КАК РЕЖИССЁР: СЮЖЕТ, ДЕЙСТВИЕ, ПЕРСОНАЖ, ФОН.\n"
-            "ТЕКСТ НА ИЗОБРАЖЕНИИ:\n"
-            "  - ВЕРХНЯЯ ТРЕТЬ, СЛЕВА: КРУГЛАЯ ДАТА ИЛИ СЛОВО (НАПРИМЕР, «СЕГОДНЯ», КРУПНО, БЕЛЫЙ/ПОЛУПРОЗРАЧНЫЙ ФОН, СТРОГИЙ ШРИФТ).\n"
-            "  - ВЕРХНЯЯ ТРЕТЬ, СПРАВА: ВРЕМЯ (НАПРИМЕР, «20:00»), ЯРКО-ОРАНЖЕВЫЙ, ЖИРНЫЙ, ОГРОМНЫЙ.\n"
-            "  - НИЖНЯЯ ТРЕТЬ, ПО ЦЕНТРУ: ГЛАВНАЯ ФРАЗА (НАПРИМЕР, «УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН»), ОЧЕНЬ КРУПНЫЙ БЕЛЫЙ ИЛИ ЖЁЛТЫЙ ТЕКСТ С ПОДЛОЖКОЙ.\n"
-            "ПРИМЕР (КЛАССИЧЕСКИЙ):\n"
-            "СЦЕНА: ВЕЧЕРНЯЯ ДИНАМИЧНАЯ СЦЕНА, ПЕРРОН ВОКЗАЛА, ТЁПЛЫЙ ЗАКАТНЫЙ СВЕТ.\n"
-            "ПЕРСОНАЖ: МУЖЧИНА 35–40 ЛЕТ (ТОЧНОЕ ЛИЦО С ФОТО), БЕЖИТ ВПЕРЁД С НОУТБУКОМ В РУКЕ, УВЕРЕННЫЙ ВЗГЛЯД, ЛЁГКАЯ УЛЫБКА.\n"
-            "ФОН: СЗАДИ УХОДЯТ ЛЮДИ, ЧАСЫ ПОКАЗЫВАЮТ 19:55, ПОЕЗД С ОТКРЫТОЙ ДВЕРЬЮ (ПОСЛЕДНИЙ ВАГОН).\n"
-            "ТЕКСТ НА ИЗОБРАЖЕНИИ: ВЕРХНЯЯ ТРЕТЬ, СЛЕВА — «СЕГОДНЯ»; ВЕРХНЯЯ ТРЕТЬ, СПРАВА — «20:00»; НИЖНЯЯ ТРЕТЬ — «УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН».\n"
-            "ОСВЕЩЕНИЕ: ЗОЛОТОЙ ЧАС + БЛИКИ ОТ ФАР И ТАБЛО, КОНТРАСТ, ЭНЕРГИЯ.\n\n"
-            "=== СТИЛЬ 2: ХАЙ-ТЕК / КИБЕРПАНК (ЦИФРОВОЙ ФАНТАСТИЧЕСКИЙ РЕАЛИЗМ) ===\n"
-            "СЦЕНА: ФУТУРИСТИЧЕСКИЙ ПЕРРОН, ПРОЗРАЧНЫЙ ПОЕЗД, НЕОНОВЫЕ ОГНИ.\n"
-            "ПЕРСОНАЖ: МУЖЧИНА В СТИЛЬНОМ ПИДЖАКЕ, НАРУЧНЫЕ ЧАСЫ, ПОД МЫШКОЙ ИНСТРУМЕНТЫ ДИЗАЙНЕРА, В РУКЕ НОУТБУК С ПУЛЬСИРУЮЩИМ ЭКРАНОМ.\n"
-            "ФОН: ПОЕЗД УЖЕ ТРОГАЕТСЯ, ПОСЛЕДНИЙ ВАГОН ПРОЗРАЧНЫЙ, В НЁМ ЛЮДИ С ГАДЖЕТАМИ, ТУННЕЛЬ УХОДИТ В СИНЮЮ ДАЛЬ.\n"
-            "ТЕКСТ НА ИЗОБРАЖЕНИИ: ТАКОЙ ЖЕ, КАК В КЛАССИЧЕСКОМ СТИЛЕ (ВЕРХНЯЯ ТРЕТЬ СЛЕВА/СПРАВА, НИЖНЯЯ ТРЕТЬ ПО ЦЕНТРУ).\n"
-            "ЦВЕТОВАЯ ГАММА: ПУРПУРНЫЙ, ЗОЛОТОЙ, ТЁМНО-СИНИЙ, НЕОНОВЫЕ АКЦЕНТЫ.\n"
-            "ОСВЕЩЕНИЕ: КОНТРАСТНОЕ, ТУННЕЛЬ — ХОЛОДНЫЙ СИНИЙ НЕОН, ВАГОН — ТЁПЛЫЙ ЖЁЛТЫЙ СВЕТ.\n"
-            "АТМОСФЕРА: ГЕРОЙ РАЗРЫВАЕТСЯ МЕЖДУ СЕМЬЁЙ И ТЕХНОЛОГИЯМИ, НО УСПЕВАЕТ В ПОСЛЕДНЮЮ СЕКУНДУ. ЗА СПИНОЙ — ТЕНИ ДЕТЕЙ, ПРЕВРАЩАЮЩИЕСЯ В ПИКСЕЛИ.\n\n"
-            "ТЕПЕРЬ СОЗДАЙ ПРОМТ В ОБОИХ СТИЛЯХ НА ОСНОВЕ ЗАПРОСА ПОЛЬЗОВАТЕЛЯ. "
-            "ВЫВЕДИ ИХ ЧЁТКО С РАЗДЕЛИТЕЛЯМИ:\n"
-            "=== КЛАССИЧЕСКИЙ СТИЛЬ ===\n[ПРОМТ]\n=== ХАЙ-ТЕК СТИЛЬ ===\n[ПРОМТ]"
+            "Ты — эксперт по промтам для генерации изображений. Создай два промта в формате JSON (classic и hightech) по запросу пользователя.\n"
+            "Правила:\n"
+            "- Используй русский язык. В полях 'content' внутри 'text_on_image' текст должен быть ЗАГЛАВНЫМИ БУКВАМИ (крупная кириллица).\n"
+            "- В остальных полях (scene, person, background_action, mood_and_lighting) пиши обычным регистром, коротко, но визуально ёмко.\n"
+            "- Добавь поле 'brief_description' для каждого стиля. Это краткое описание сцены на русском, 10–20 слов, обычный регистр (не капс).\n"
+            "- Обязательно укажи движение, свет, цветовую гамму, атмосферу.\n"
+            "- Лицо героя — как на загруженном фото (не изменять черты).\n"
+            "- Формат: 16:9, фотореализм, высокое разрешение.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"Краткое описание классической сцены\",\n"
+            "    \"scene\": \"...\",\n"
+            "    \"atmosphere\": \"...\",\n"
+            "    \"person\": {\n"
+            "      \"description\": \"...\",\n"
+            "      \"preservation\": \"лицо максимально реалистичное, черты сохранены\"\n"
+            "    },\n"
+            "    \"background_action\": { ... },\n"
+            "    \"text_on_image\": [\n"
+            "      {\"position\": \"верхняя треть, слева\", \"content\": \"СЕГОДНЯ\", \"style\": \"крупный полупрозрачный фон, строгий шрифт\"},\n"
+            "      {\"position\": \"верхняя треть, справа\", \"content\": \"20:00\", \"style\": \"крупный ярко-оранжевый, жирный\"},\n"
+            "      {\"position\": \"нижняя треть, по центру\", \"content\": \"УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН\", \"style\": \"очень крупный белый или жёлтый, жирный, с подложкой\"}\n"
+            "    ],\n"
+            "    \"mood_and_lighting\": \"...\"\n"
+            "  },\n"
+            "  \"hightech\": {\n"
+            "    \"brief_description\": \"Краткое описание хай-тек сцены\",\n"
+            "    \"scene\": \"... (киберпанк, прозрачный поезд, неон)\",\n"
+            "    ... (аналогичная структура, но с футуристическими элементами)\n"
+            "  }\n"
+            "}\n"
+            "В поле 'background_action' можно описать фон и второстепенные объекты.\n"
+            "Текст на изображении (text_on_image) должен быть обязательно, хотя бы одна фраза.\n"
+            "Выведи только JSON-объект, без пояснений. Ключи classic и hightech обязательны.\n"
         )
-        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nСОЗДАЙ ПРОМТЫ (ТОЛЬКО ПРОМТЫ, БЕЗ ЛИШНИХ СЛОВ):"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     elif action == 'prompt_video':
         system_prompt = (
-            "ТЫ — ЭКСПЕРТ ПО ПРОМТАМ ДЛЯ ГЕНЕРАЦИИ ВИДЕО.\n"
-            "СОЗДАЙ ВИДЕО-ПРОМТ В ДВУХ СТИЛЯХ.\n"
-            "ПРАВИЛА:\n"
-            "1. РУССКИЙ, ЗАГЛАВНЫЕ БУКВЫ, КОРОТКИЕ ПРЕДЛОЖЕНИЯ.\n"
-            "2. ОПИШИ ДВИЖЕНИЕ КАМЕРЫ (ТРЕКИНГ, ЗУМ, ПАНОРАМА, POV, ДРОН).\n"
-            "3. РАЗБЕЙ ДЕЙСТВИЕ ПО ТАЙМИНГУ (0–1.5С, 1.5–3.0С, 3.0–5.0С).\n"
-            "4. УКАЖИ СВЕТ, ЦВЕТОВУЮ ПАЛИТРУ, ФОРМАТ (16:9 ИЛИ 9:16).\n"
-            "5. ДЛИТЕЛЬНОСТЬ: 5–10 СЕКУНД, 24FPS ДЛЯ КИНОШНОСТИ.\n"
-            "6. ДЛЯ ХАЙ-ТЕК СТИЛЯ ОБЯЗАТЕЛЬНО ДОБАВЬ НЕОНОВЫЕ ЭФФЕКТЫ, ПРОЗРАЧНЫЕ ВАГОНЫ, ЦИФРОВЫЕ ГЛЮКИ.\n"
-            "7. ТЕКСТ НА ВИДЕО ДОЛЖЕН ПОЯВЛЯТЬСЯ ПОЭТАПНО (НАПРИМЕР, СНАЧАЛА «СЕГОДНЯ», ПОТОМ «20:00», В КОНЦЕ «УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН»).\n\n"
-            "ПРИМЕР ФОРМАТА ДЛЯ ВИДЕО:\n"
-            "ОПИСАНИЕ: ВЕЧЕРНИЙ ПЕРРОН, МУЖЧИНА БЕЖИТ ПОЕЗДУ.\n"
-            "КАДР: СРЕДНИЙ, СЛЕГКА СНИЗУ.\n"
-            "ДВИЖЕНИЕ КАМЕРЫ: ТРЕКИНГ ЗА ПЕРСОНАЖЕМ.\n"
-            "СВЕТ/ПАЛИТРА: ТЁПЛЫЙ ЗАКАТ + ХОЛОДНЫЙ НЕОН ТАБЛО.\n"
-            "ТАЙМИНГ:\n"
-            "  0-1.5С: ГЕРОЙ ПОЯВЛЯЕТСЯ ВДАЛИ, СЖИМАЕТ НОУТБУК.\n"
-            "  1.5-3.5С: КРУПНЫЙ ПЛАН ЛИЦА, УЛЫБКА, НАПРЯЖЁННЫЙ ВЗГЛЯД.\n"
-            "  3.5-5.0С: ПРЫЖОК В ПОСЛЕДНИЙ ВАГОН, ДВЕРИ ЗАКРЫВАЮТСЯ.\n\n"
-            "СОЗДАЙ ПРОМТ ДЛЯ ВИДЕО ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ (ОБА СТИЛЯ)."
+            "Ты — эксперт по видеопромтам. Создай два JSON-промта (classic и hightech) для генерации видео по запросу пользователя.\n"
+            "Правила:\n"
+            "- Русский язык. В полях 'text_overlay' текст — ЗАГЛАВНЫМИ БУКВАМИ.\n"
+            "- Добавь поле 'brief_description' для каждого стиля: краткое описание видео на русском, 10–20 слов, обычный регистр.\n"
+            "- Опиши движение камеры, тайминг (0–1.5с, 1.5–3.5с, 3.5–5с), свет, цветовую палитру, формат (16:9), длительность 5 сек, 24fps.\n"
+            "- В хай-тек стиле добавь неон, глюки, цифровые элементы.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"...\",\n"
+            "    \"description\": \"...\",\n"
+            "    \"camera\": \"...\",\n"
+            "    \"lighting_palette\": \"...\",\n"
+            "    \"timeline\": [\n"
+            "      {\"time\": \"0-1.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"1.5-3.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"3.5-5s\", \"action\": \"...\"}\n"
+            "    ],\n"
+            "    \"text_overlay\": [\n"
+            "      {\"time\": \"0.5s\", \"content\": \"СЕГОДНЯ\", \"position\": \"верхний левый угол\"},\n"
+            "      ...\n"
+            "    ],\n"
+            "    \"format\": \"16:9, 5s, 24fps\"\n"
+            "  },\n"
+            "  \"hightech\": { ... аналог }\n"
+            "}\n"
+            "Только JSON, без лишнего текста."
         )
-        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nСОЗДАЙ ВИДЕО-ПРОМТЫ (ТОЛЬКО ПРОМТЫ, БЕЗ ЛИШНИХ СЛОВ):"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     else:
-        await update.message.reply_text("ОШИБКА: ДЕЙСТВИЕ НЕ ОПРЕДЕЛЕНО.", reply_markup=get_main_keyboard())
+        await update.message.reply_text("Ошибка: действие не определено.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
     save_message(user_id, "user", user_input)
@@ -1086,45 +1104,80 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
         answer = await masha_text_generate(user_prompt, history, "deepseek-chat")
-        if answer:
-            # Очистка и форматирование
-            answer = answer.strip()
-            # Убираем маркдауны и лишние обёртки
-            for prefix in ["ПРОМТ:", "ВОТ ПРОМТ:", "ОТВЕТ:", "ПРОМТ ДЛЯ ИЗОБРАЖЕНИЯ:", "ПРОМТ ДЛЯ ВИДЕО:"]:
-                if answer.startswith(prefix):
-                    answer = answer[len(prefix):].strip()
-            # Заменяем возможные маркдаун-блоки на простой текст
-            answer = answer.replace('```', '').replace('**', '').replace('__', '')
-            # Оставляем пустые строки для читаемости
-            answer = '\n'.join(line.strip() for line in answer.split('\n') if line.strip() or not line)
+        if not answer:
+            raise ValueError("Пустой ответ от модели")
+        # Очистка markdown-обёрток
+        answer = answer.strip()
+        if answer.startswith("```json"):
+            answer = answer[7:]
+        if answer.startswith("```"):
+            answer = answer[3:]
+        if answer.endswith("```"):
+            answer = answer[:-3]
+        answer = answer.strip()
+        # Парсим JSON
+        data = json.loads(answer)
+        classic = data.get("classic", {})
+        hightech = data.get("hightech", {})
+        classic_prompt = json.dumps(classic, ensure_ascii=False, indent=2)
+        hightech_prompt = json.dumps(hightech, ensure_ascii=False, indent=2)
+        classic_desc = classic.get("brief_description", "")
+        hightech_desc = hightech.get("brief_description", "")
     except Exception as e:
-        logger.exception("Ошибка генерации промта через deepseek")
-        await update.message.reply_text(f"❌ ОШИБКА: {str(e)[:200]}")
+        logger.exception("Ошибка генерации промтов")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:300]}")
         return POPULAR_MENU
     finally:
         stop_action.set()
         await action_task
 
-    if answer:
-        # Отправляем промты в моноширинном блоке для удобного копирования
-        await update.message.reply_text(
-            f"✨ **ВАШИ ПРОМТЫ ГОТОВЫ (КОПИРУЙТЕ):**\n\n"
-            f"```\n{answer}\n```",
+    # Сохраняем JSON в user_data для callback-копирования
+    context.user_data['last_classic_prompt'] = classic_prompt
+    context.user_data['last_hightech_prompt'] = hightech_prompt
+
+    # Отправляем классический стиль
+    if classic_desc:
+        await update.message.reply_text(f"📖 *Описание:* {classic_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✨ **Классический стиль (JSON)**\n\n```json\n{classic_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_classic")]]),
+        parse_mode="Markdown"
+    )
+
+    # Отправляем хай-тек стиль
+    if hightech_desc:
+        await update.message.reply_text(f"🚀 *Описание:* {hightech_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"💡 **Хай-тек стиль (JSON)**\n\n```json\n{hightech_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_hightech")]]),
+        parse_mode="Markdown"
+    )
+
+    await update.message.reply_text(
+        "💡 **Как использовать:**\n"
+        "• Нажмите на кнопку под нужным стилем → бот пришлёт JSON в отдельном сообщении, его легко скопировать.\n"
+        "• Вставьте JSON в нейросеть (Midjourney, DALL-E, Kling и др.).\n"
+        "• Текст на изображении (поля `content`) уже написан ЗАГЛАВНЫМИ, как вы просили.\n"
+        "• Описание перед JSON — только для ознакомления, оно не копируется.",
+        reply_markup=get_popular_menu_keyboard()
+    )
+    return POPULAR_MENU
+async def copy_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "copy_classic":
+        text = context.user_data.get('last_classic_prompt', "")
+    elif query.data == "copy_hightech":
+        text = context.user_data.get('last_hightech_prompt', "")
+    else:
+        return
+    if text:
+        await query.message.reply_text(
+            f"✅ Скопируйте JSON:\n\n```json\n{text}\n```",
             parse_mode="Markdown"
         )
-        save_message(user_id, "assistant", answer)
-        await update.message.reply_text(
-            "📋 **НАЖМИТЕ НА БЛОК ВЫШЕ → ВЫДЕЛИТЬ ВСЁ → СКОПИРОВАТЬ**\n\n"
-            "ЗАТЕМ ВСТАВЬТЕ НУЖНЫЙ ПРОМТ В ЛЮБУЮ НЕЙРОСЕТЬ.\n\n"
-            "💡 **СОВЕТ:** ДЛЯ ХАЙ-ТЕК СТИЛЯ ДОБАВЬТЕ В ПРОМТ СВОЙ ТЕКСТ (ДАТА, ВРЕМЯ, ФРАЗА).",
-            reply_markup=get_popular_menu_keyboard()
-        )
     else:
-        await update.message.reply_text("❌ НЕ УДАЛОСЬ СОЗДАТЬ ПРОМТ. ПОПРОБУЙТЕ УТОЧНИТЬ ЗАПРОС.", reply_markup=get_popular_menu_keyboard())
-
-    context.user_data.pop('pending_action', None)
-    return POPULAR_MENU
-
+        await query.message.reply_text("❌ Нет сохранённого промта. Сгенерируйте заново.")
 async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     prompt = update.message.text
