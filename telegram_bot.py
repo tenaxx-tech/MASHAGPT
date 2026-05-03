@@ -66,7 +66,7 @@ MODEL_PRICES = {
     "claude-haiku-4-5": 5, "claude-sonnet-4-5": 15, "claude-opus-4-5": 25,
     "gemini-3-flash": 3, "gemini-2.5-pro": 10, "gemini-3-pro": 16, "gemini-3-pro-image": 12,
     "z-image": 0, "grok-imagine-text-to-image": 0,
-    "codeplugtech-face-swap": 0, "cdlingram-face-swap": 0,
+    "face_swap_target": 0,  # новая модель замены лица
     "recraft-crisp-upscale": 0, "recraft-remove-background": 0, "topaz-image-upscale": 0,
     "flux-2": 0, "qwen-edit-multiangle": 0, "nano-banana-2": 0, "nano-banana-pro": 0,
     "midjourney": 0, "gpt-image-1-5-text-to-image": 0, "gpt-image-1-5-image-to-image": 0,
@@ -86,8 +86,7 @@ MODEL_PRICES = {
 }
 
 MODEL_INPUT_TYPE = {
-    "codeplugtech-face-swap": ("image", "image"),
-    "cdlingram-face-swap": ("image", "image"),
+    "face_swap_target": ("image", "image"),
     "gpt-image-1-5-image-to-image": ("image", "text"),
     "qwen-edit-multiangle": ("image", "text"),
     "kling-v1-avatar-pro": ("image", "audio"),
@@ -157,8 +156,7 @@ def get_text_models_keyboard():
 def get_image_models_keyboard():
     models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
-        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
-        ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
+        ("face_swap_target", "Замена лица", 0),
         ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
         ("recraft-remove-background", "Recraft Remove Background", 0),
         ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
@@ -391,7 +389,7 @@ async def masha_media_generate(model: str, payload: dict):
     return file_bytes, media_url
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
-    if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
+    if model == "face_swap_target":
         if image_url and " " in image_url:
             urls = image_url.split()
             return {"inputImage": urls[0], "swapImage": urls[1]}
@@ -495,6 +493,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -513,6 +512,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"💰 Новый баланс: {new_balance} промтов.",
         parse_mode="Markdown"
     )
+
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
     if chat_id is None:
         chat_id = update.effective_chat.id
@@ -591,11 +591,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Определяем категорию по текущему состоянию (хранится в context.user_data)
-    # В этом обработчике мы будем определять модель по тексту кнопки.
-    # Для каждой категории (текст, изображения, видео, аудио, аватар) есть свой набор моделей.
-    # Мы проверим все возможные модели.
-
     # Сначала проверим текстовые модели
     text_models = [
         ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
@@ -625,8 +620,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
     # Проверяем модели изображений (бесплатные)
     image_models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
-        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
-        ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
+        ("face_swap_target", "Замена лица", 0),
         ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
         ("recraft-remove-background", "Recraft Remove Background", 0),
         ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
@@ -997,24 +991,8 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return AWAIT_IMAGE_ONLY
 
     elif text == "🔄 7. Заменить лицо":
-        keyboard = [
-            [KeyboardButton("CodePlugTech (быстрый, бесплатно)")],
-            [KeyboardButton("CDIngram (качественный, бесплатно)")],
-            [KeyboardButton("🔙 Назад")]
-        ]
-        await update.message.reply_text(
-            "Выберите модель для замены лица:\n"
-            "• CodePlugTech – быстрый и доступный\n"
-            "• CDIngram – улучшенная детализация\n\n"
-            "Обе модели бесплатны (лимит 5 изображений в неделю).",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-        )
-        context.user_data['pending_action'] = 'face_swap'
-        return POPULAR_MENU
-
-    elif text in ("CodePlugTech (быстрый, бесплатно)", "CDIngram (качественный, бесплатно)"):
-        model_id = "codeplugtech-face-swap" if "CodePlugTech" in text else "cdlingram-face-swap"
-        context.user_data['selected_model'] = model_id
+        # Просто используем единую модель face_swap_target без выбора
+        context.user_data['selected_model'] = 'face_swap_target'
         context.user_data['model_price'] = 0
         context.user_data['media_category'] = 'image'
         await update.message.reply_text(
@@ -1366,7 +1344,7 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Ошибка: не найдено целевое фото. Начните заново.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    model = context.user_data.get('selected_model', 'codeplugtech-face-swap')
+    model = context.user_data.get('selected_model', 'face_swap_target')
     user_id = update.effective_user.id
     used = get_weekly_image_count(user_id)
     paid = False
