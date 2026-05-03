@@ -27,7 +27,7 @@ from robokassa import get_payment_url, check_result_signature, check_success_sig
 from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
 
 logging.basicConfig(
-    format="%(asctime)s - %name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[logging.StreamHandler()]
 )
