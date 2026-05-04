@@ -1302,11 +1302,9 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     user_prompt = None if text.lower() == "пропустить" else text
 
-    # Используем Kling 2.6 (image-to-video) – рабочая модель
     model = "kling-2-6-image-to-video"
-    price = MODEL_PRICES.get(model, 6)   # цена 6 промтов (из вашего словаря)
+    price = MODEL_PRICES.get(model, 6)
 
-    # Проверка баланса и списание
     if get_user_balance(user_id) < price:
         await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
@@ -1314,11 +1312,9 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
 
-    # Если пользователь не ввёл свой промпт, даём максимально щадящий
     if not user_prompt:
         user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
 
-    # Усиленный промпт (русский + английский для надёжности)
     face_prompt_ru = (
         "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
         "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
@@ -1333,27 +1329,26 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     )
     final_prompt = f"{face_prompt_ru} {face_prompt_en} {user_prompt}"
 
-    # Негативный промпт (что исключить)
     negative_prompt = (
         "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, "
         "SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES, STRONG_EMOTION, "
         "OPEN_MOUTH, TEETH, TONGUE, LOOKING_AWAY, PROFILE, SIDE_FACE"
     )
 
-    # Формируем payload – все возможные параметры для Kling через Masha
     payload = {
         "prompt": final_prompt,
         "imageUrl": photo_url,
-        "duration": "6",               # длительность 6 секунд
-        "sound": False,               # без звука
-        "cfgScale": 0.9,              # максимально строгое следование промпту (0.5–0.9)
+        "duration": "6",
+        "sound": False,
+        "cfgScale": 0.9,
         "negative_prompt": negative_prompt,
-        "resolution": "1080p",        # высокое разрешение
-        "mode": mode,                 # normal или fun – передаём как есть
-        # Дополнительные параметры, если API принимает:
-        # "face_fix": True,           # (если есть) специальный флаг фиксации лица
-        # "stability": "high",        # высокая стабильность
-        # "enhance_face": True,
+        "resolution": "1080p",
+        "mode": mode,
+        # НОВЫЕ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ДЛЯ УЛУЧШЕНИЯ ЛИЦА:
+        "face_fix": True,           # фиксация лица (если поддерживается API)
+        "stability": "high",        # высокая стабильность
+        "motion_strength": 0.6,     # уменьшенная интенсивность движения
+        "loop": False,              # без зацикливания
     }
 
     processing_msg = await update.message.reply_text(
@@ -1366,8 +1361,25 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         logger.exception("Ошибка генерации Kling")
         await processing_msg.delete()
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)   # возвращаем токены при ошибке
+        add_balance(user_id, price)
         return POPULAR_MENU
+
+    await processing_msg.delete()
+
+    if result_bytes:
+        await update.message.reply_video(
+            video=io.BytesIO(result_bytes),
+            caption="🖼️ Оживлённое видео (Kling 2.6, лицо максимально сохранено)"
+        )
+        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
+        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
+        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
+    else:
+        await update.message.reply_text("❌ Не удалось получить результат.")
+        add_balance(user_id, price)
+
+    await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
+    return POPULAR_MENU
 
     await processing_msg.delete()
 
