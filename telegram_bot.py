@@ -43,7 +43,7 @@ ADMIN_IDS = [466829859]   # Ваш Telegram user_id
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
 AWAIT_FACE_SWAP_SOURCE = 10
-AWAIT_IMAGE_FOR_EDIT = 11
+AWAIT_IMAGE_FOR_EDIT = 11          # для img2img
 AWAIT_PROMPT_FOR_EDIT = 12
 AWAIT_IMAGE_FOR_AVATAR = 13
 AWAIT_AUDIO_FOR_AVATAR = 14
@@ -126,7 +126,7 @@ def get_popular_menu_keyboard():
         [KeyboardButton("🧹 5. Удалить фон")],
         [KeyboardButton("✨ 6. Улучшить качество")],
         [KeyboardButton("🔄 7. Заменить лицо")],
-        [KeyboardButton("🎨 8. Редактировать изображение (img2img)")],
+        [KeyboardButton("🎨 8. Редактировать изображение (img2img)")],   # НОВЫЙ ПУНКТ
         [KeyboardButton("🔙 Главное меню")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -156,6 +156,7 @@ def get_text_models_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 def get_image_models_keyboard():
+    # Только text-to-image модели
     models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
         ("flux-2", "Flux 2", 0), ("nano-banana-2", "Nano Banana 2", 0),
@@ -634,7 +635,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             )
             return AWAIT_PROMPT
 
-    # Проверяем модели видео
+    # Проверяем модели видео (оставлено как в предыдущей версии)
     video_models = [
         ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
         ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
@@ -972,6 +973,7 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['pending_action'] = 'face_swap'
         return POPULAR_MENU
 
+    # НОВЫЙ ПУНКТ: Редактирование изображения (img2img)
     elif text == "🎨 8. Редактировать изображение (img2img)":
         context.user_data['selected_model'] = 'gpt-image-1-5-image-to-image'
         context.user_data['model_price'] = 0
@@ -1006,6 +1008,8 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ------------------- Обработчики для пунктов популярного меню -------------------
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import json
+import asyncio
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -1158,7 +1162,6 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=get_popular_menu_keyboard()
     )
     return POPULAR_MENU
-
 async def copy_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1175,7 +1178,6 @@ async def copy_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
     else:
         await query.message.reply_text("❌ Нет сохранённого промта. Сгенерируйте заново.")
-
 async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     prompt = update.message.text
@@ -1289,7 +1291,6 @@ async def handle_animate_photo_mode(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("Пожалуйста, выберите режим: Normal или Fun.", reply_markup=get_cancel_keyboard())
         return AWAIT_MODE_FOR_ANIMATE
 
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ОЖИВЛЕНИЯ ФОТО используем Kling 2.6 (image-to-video) – рабочая модель
 async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     text = update.message.text
@@ -1300,100 +1301,43 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
 
     photo_url = context.user_data.get('animate_photo_url')
     mode = context.user_data.get('animate_mode', 'normal')
-    user_prompt = None if text.lower() == "пропустить" else text
+    prompt = None if text.lower() == "пропустить" else text
 
+    # Используем Kling 1.6 Image-to-Video (сохраняет лица, без звука)
     model = "kling-2-6-image-to-video"
-    price = MODEL_PRICES.get(model, 6)
+    
+    # Стандартный промпт, если пользователь ничего не ввёл
+    if not prompt:
+        prompt = "ПЛАВНОЕ ДВИЖЕНИЕ: ЛЁГКИЙ ПОВОРОТ ГОЛОВЫ, ЕСТЕСТВЕННОЕ МОРГАНИЕ, ЛЁГКАЯ УЛЫБКА"
+    
+    payload = build_payload(model, prompt=prompt, image_url=photo_url)
+    if not payload:
+        await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    
+    # Режим 'normal' или 'fun' — для Kling добавляем в описание
+    if mode == "fun":
+        prompt = f"[ВЕСЁЛАЯ АТМОСФЕРА] {prompt}"
 
-    if get_user_balance(user_id) < price:
-        await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}.", reply_markup=get_main_keyboard())
-        return POPULAR_MENU
-    if not deduct_balance(user_id, price):
-        await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
-        return POPULAR_MENU
-
-    if not user_prompt:
-        user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
-
-    face_prompt_ru = (
-        "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
-        "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
-        "СОХРАНИТЬ ТОЧНЫЕ ПРОПОРЦИИ, ТЕКСТУРУ КОЖИ, ВЗГЛЯД. "
-        "ДВИЖЕНИЯ ТОЛЬКО ЕСТЕСТВЕННЫЕ: ЛЁГКИЙ ПОВОРОТ, МОРГАНИЕ. "
-    )
-    face_prompt_en = (
-        "CRITICAL: THE FACE MUST REMAIN IDENTICAL TO THE INPUT PHOTO. "
-        "DO NOT CHANGE FACIAL FEATURES, DO NOT ADD SMILE, DO NOT CREATE GRIMACES. "
-        "PRESERVE EXACT PROPORTIONS, SKIN TEXTURE, GAZE. "
-        "ONLY NATURAL MOVEMENTS: SLIGHT TURN, BLINKING. "
-    )
-    final_prompt = f"{face_prompt_ru} {face_prompt_en} {user_prompt}"
-
-    negative_prompt = (
-        "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, "
-        "SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES, STRONG_EMOTION, "
-        "OPEN_MOUTH, TEETH, TONGUE, LOOKING_AWAY, PROFILE, SIDE_FACE"
-    )
-
-    payload = {
-        "prompt": final_prompt,
-        "imageUrl": photo_url,
-        "duration": "6",
-        "sound": False,
-        "cfgScale": 0.9,
-        "negative_prompt": negative_prompt,
-        "resolution": "1080p",
-        "mode": mode,
-        # НОВЫЕ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ДЛЯ УЛУЧШЕНИЯ ЛИЦА:
-        "face_fix": True,           # фиксация лица (если поддерживается API)
-        "stability": "high",        # высокая стабильность
-        "motion_strength": 0.6,     # уменьшенная интенсивность движения
-        "loop": False,              # без зацикливания
-    }
-
-    processing_msg = await update.message.reply_text(
-        "🎬 Генерирую видео (оживляю Ваше фото). Подождите до 40 секунд..."
-    )
-
+    stop_action = asyncio.Event()
+    action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
     except Exception as e:
-        logger.exception("Ошибка генерации Kling")
-        await processing_msg.delete()
+        logger.exception("Ошибка оживления фото")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)
-        return POPULAR_MENU
-
-    await processing_msg.delete()
-
-    if result_bytes:
-        await update.message.reply_video(
-            video=io.BytesIO(result_bytes),
-            caption="🖼️ Оживлённое видео (Kling 2.6, лицо максимально сохранено)"
-        )
-        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
-    else:
-        await update.message.reply_text("❌ Не удалось получить результат.")
-        add_balance(user_id, price)
-
-    await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
-    return POPULAR_MENU
-
-    await processing_msg.delete()
+        return MAIN_MENU
+    finally:
+        stop_action.set()
+        await action_task
 
     if result_bytes:
-        await update.message.reply_video(
-            video=io.BytesIO(result_bytes),
-            caption="🖼️ Оживлённое видео (Kling 2.6, лицо максимально сохранено)"
-        )
+        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео (Kling 1.6, сохранение лиц)")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
+        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={prompt}")
+        save_message(user_id, "assistant", "Видео создано с сохранением лица")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
-        add_balance(user_id, price)
 
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
@@ -1581,6 +1525,7 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+
 # Обработчик редактирования изображения (img2img) – получает фото и переходит к запросу промпта
 async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1608,6 +1553,7 @@ async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_PROMPT_FOR_EDIT
+
 
 async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prompt_text = update.message.text
@@ -1677,6 +1623,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+
 async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1700,6 +1647,7 @@ async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_AUDIO_FOR_AVATAR
+
 
 async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1768,6 +1716,7 @@ async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+
 async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1791,6 +1740,7 @@ async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_IMAGE_FOR_ANIMATE
+
 
 async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1855,6 +1805,7 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
+
 
 # ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2100,7 +2051,6 @@ async def main_async():
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
-    app.add_handler(CallbackQueryHandler(copy_prompt_callback, pattern="^(copy_classic|copy_hightech)$"))
 
     port = int(os.getenv("PORT", 8080))
     asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
