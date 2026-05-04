@@ -1289,7 +1289,7 @@ async def handle_animate_photo_mode(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("Пожалуйста, выберите режим: Normal или Fun.", reply_markup=get_cancel_keyboard())
         return AWAIT_MODE_FOR_ANIMATE
 
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ОЖИВЛЕНИЯ ФОТО (используем hailuo-2-3)
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ОЖИВЛЕНИЯ ФОТО используем Kling 2.6 (image-to-video) – рабочая модель
 async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     text = update.message.text
@@ -1302,12 +1302,11 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     user_prompt = None if text.lower() == "пропустить" else text
 
-    if not user_prompt:
-        user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
+    # Используем Kling 2.6 (image-to-video) – рабочая модель
+    model = "kling-2-6-image-to-video"
+    price = MODEL_PRICES.get(model, 6)   # цена 6 промтов (из вашего словаря)
 
-    model = "hailuo-2-3"
-    price = MODEL_PRICES.get(model, 4)
-
+    # Проверка баланса и списание
     if get_user_balance(user_id) < price:
         await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
@@ -1315,42 +1314,59 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
 
-    face_prompt = (
+    # Если пользователь не ввёл свой промпт, даём максимально щадящий
+    if not user_prompt:
+        user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
+
+    # Усиленный промпт (русский + английский для надёжности)
+    face_prompt_ru = (
         "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
         "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
         "СОХРАНИТЬ ТОЧНЫЕ ПРОПОРЦИИ, ТЕКСТУРУ КОЖИ, ВЗГЛЯД. "
         "ДВИЖЕНИЯ ТОЛЬКО ЕСТЕСТВЕННЫЕ: ЛЁГКИЙ ПОВОРОТ, МОРГАНИЕ. "
-        f"{user_prompt}"
+    )
+    face_prompt_en = (
+        "CRITICAL: THE FACE MUST REMAIN IDENTICAL TO THE INPUT PHOTO. "
+        "DO NOT CHANGE FACIAL FEATURES, DO NOT ADD SMILE, DO NOT CREATE GRIMACES. "
+        "PRESERVE EXACT PROPORTIONS, SKIN TEXTURE, GAZE. "
+        "ONLY NATURAL MOVEMENTS: SLIGHT TURN, BLINKING. "
+    )
+    final_prompt = f"{face_prompt_ru} {face_prompt_en} {user_prompt}"
+
+    # Негативный промпт (что исключить)
+    negative_prompt = (
+        "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, "
+        "SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES, STRONG_EMOTION, "
+        "OPEN_MOUTH, TEETH, TONGUE, LOOKING_AWAY, PROFILE, SIDE_FACE"
     )
 
-    # Согласно документации Masha
+    # Формируем payload – все возможные параметры для Kling через Masha
     payload = {
-        "prompt": face_prompt,
+        "prompt": final_prompt,
         "imageUrl": photo_url,
-        "duration": "6",              # строка
-        "resolution": "1080P",        # с большой P
-        "variant": "pro"              # pro для лучшего качества лица
+        "duration": "6",               # длительность 6 секунд
+        "sound": False,               # без звука
+        "cfgScale": 0.9,              # максимально строгое следование промпту (0.5–0.9)
+        "negative_prompt": negative_prompt,
+        "resolution": "1080p",        # высокое разрешение
+        "mode": mode,                 # normal или fun – передаём как есть
+        # Дополнительные параметры, если API принимает:
+        # "face_fix": True,           # (если есть) специальный флаг фиксации лица
+        # "stability": "high",        # высокая стабильность
+        # "enhance_face": True,
     }
 
     processing_msg = await update.message.reply_text(
-        "🎬 Генерирую видео на Hailuo 2.3 Pro. Лицо будет максимально сохранено. Подождите до 40 секунд..."
+        "🎬 Генерирую видео (оживляю Ваше фото). Подождите до 40 секунд..."
     )
 
     try:
-        # ВАЖНО: убедитесь, что в config.py MASHA_BASE_URL = "https://api.mashagpt.ru/v1"
         result_bytes, media_url = await masha_media_generate(model, payload)
     except Exception as e:
-        logger.exception("Ошибка генерации Hailuo")
+        logger.exception("Ошибка генерации Kling")
         await processing_msg.delete()
-        if "404" in str(e):
-            await update.message.reply_text(
-                "❌ Ошибка: модель не найдена. Проверьте в config.py, что MASHA_BASE_URL заканчивается на /v1\n"
-                "Текущий URL: " + MASHA_BASE_URL,
-                reply_markup=get_popular_menu_keyboard()
-            )
-        else:
-            await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+        add_balance(user_id, price)   # возвращаем токены при ошибке
         return POPULAR_MENU
 
     await processing_msg.delete()
@@ -1358,11 +1374,11 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     if result_bytes:
         await update.message.reply_video(
             video=io.BytesIO(result_bytes),
-            caption="🖼️ Оживлённое видео (Hailuo 2.3 Pro, лицо сохранено)"
+            caption="🖼️ Оживлённое видео (Kling 2.6, лицо максимально сохранено)"
         )
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Hailuo 2.3 Pro (face preserved)")
+        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
         add_balance(user_id, price)
