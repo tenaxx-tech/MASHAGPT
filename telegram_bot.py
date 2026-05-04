@@ -1302,15 +1302,12 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     user_prompt = None if text.lower() == "пропустить" else text
 
-    # Стандартный промпт с усилением сохранения лица
     if not user_prompt:
         user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
 
-    # Модель Hailuo 2.3 (есть в PAYLOADS)
     model = "hailuo-2-3"
     price = MODEL_PRICES.get(model, 4)
 
-    # Проверка баланса
     if get_user_balance(user_id) < price:
         await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
@@ -1318,7 +1315,6 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
 
-    # Усиленный промпт для лица (на русском, с запретами)
     face_prompt = (
         "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
         "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
@@ -1327,29 +1323,33 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         f"{user_prompt}"
     )
 
-    # Формируем payload вручную, так как в build_payload для hailuo-2-3 нет imageUrl
+    # Согласно документации Masha
     payload = {
         "prompt": face_prompt,
         "imageUrl": photo_url,
-        "duration": 6,
-        "resolution": "1080p",          # улучшаем качество
-        "variant": "standard",          # или "pro" если доступно
-        "negative_prompt": "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES"
+        "duration": "6",              # строка
+        "resolution": "1080P",        # с большой P
+        "variant": "pro"              # pro для лучшего качества лица
     }
 
-    # Уведомление
     processing_msg = await update.message.reply_text(
-        "🎬 Генерирую видео на Hailuo 2.3. Лицо будет максимально сохранено. Подождите до 30 секунд..."
+        "🎬 Генерирую видео на Hailuo 2.3 Pro. Лицо будет максимально сохранено. Подождите до 40 секунд..."
     )
 
     try:
-        # Используем стандартную функцию Masha для генерации
+        # ВАЖНО: убедитесь, что в config.py MASHA_BASE_URL = "https://api.mashagpt.ru/v1"
         result_bytes, media_url = await masha_media_generate(model, payload)
     except Exception as e:
         logger.exception("Ошибка генерации Hailuo")
         await processing_msg.delete()
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        # Возвращаем баланс в случае ошибки
+        if "404" in str(e):
+            await update.message.reply_text(
+                "❌ Ошибка: модель не найдена. Проверьте в config.py, что MASHA_BASE_URL заканчивается на /v1\n"
+                "Текущий URL: " + MASHA_BASE_URL,
+                reply_markup=get_popular_menu_keyboard()
+            )
+        else:
+            await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
         add_balance(user_id, price)
         return POPULAR_MENU
 
@@ -1358,11 +1358,11 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     if result_bytes:
         await update.message.reply_video(
             video=io.BytesIO(result_bytes),
-            caption="🖼️ Оживлённое видео (Hailuo 2.3, лицо сохранено)"
+            caption="🖼️ Оживлённое видео (Hailuo 2.3 Pro, лицо сохранено)"
         )
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Hailuo 2.3 (face preserved)")
+        save_message(user_id, "assistant", "Video generated with Hailuo 2.3 Pro (face preserved)")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
         add_balance(user_id, price)
