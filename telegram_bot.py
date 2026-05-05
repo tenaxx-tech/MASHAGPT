@@ -1254,7 +1254,6 @@ async def handle_animate_photo_mode(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("Пожалуйста, выберите режим: Normal или Fun.", reply_markup=get_cancel_keyboard())
         return AWAIT_MODE_FOR_ANIMATE
 
-# ---------- ИСПРАВЛЕННАЯ ФУНКЦИЯ ОЖИВЛЕНИЯ ФОТО (wan-2-6-image-to-video) ----------
 async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     text = update.message.text
@@ -1267,9 +1266,9 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     user_prompt = None if text.lower() == "пропустить" else text
 
-    # Используем рабочую модель Wan 2.6 Image-to-Video (цена 3 токена)
-    model = "wan-2-6-image-to-video"
-    price = MODEL_PRICES.get(model, 3)
+    # Рабочая модель Kling 2.6 (гарантированно есть в API)
+    model = "kling-2-6-image-to-video"
+    price = MODEL_PRICES.get(model, 6)   # 6 токенов
 
     # Проверка баланса и списание
     if get_user_balance(user_id) < price:
@@ -1279,25 +1278,46 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
         return POPULAR_MENU
 
-    # Формируем усиленный промпт для лица
+    # Усиленный промпт (русский + английский)
     if not user_prompt:
-        user_prompt = "Natural gentle movement, slight head turn, blinking, calm expression. Face must remain exactly as in the input photo. No smile, no grimaces."
-    else:
-        user_prompt = f"Face must remain identical to the input photo. {user_prompt}"
+        user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
+    face_prompt_ru = (
+        "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
+        "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
+        "СОХРАНИТЬ ТОЧНЫЕ ПРОПОРЦИИ, ТЕКСТУРУ КОЖИ, ВЗГЛЯД. "
+        "ДВИЖЕНИЯ ТОЛЬКО ЕСТЕСТВЕННЫЕ: ЛЁГКИЙ ПОВОРОТ, МОРГАНИЕ. "
+    )
+    face_prompt_en = (
+        "CRITICAL: THE FACE MUST REMAIN IDENTICAL TO THE INPUT PHOTO. "
+        "DO NOT CHANGE FACIAL FEATURES, DO NOT ADD SMILE, DO NOT CREATE GRIMACES. "
+        "PRESERVE EXACT PROPORTIONS, SKIN TEXTURE, GAZE. "
+        "ONLY NATURAL MOVEMENTS: SLIGHT TURN, BLINKING. "
+    )
+    final_prompt = f"{face_prompt_ru} {face_prompt_en} {user_prompt}"
 
-    # Собираем payload через build_payload (wan-2-6-image-to-video ожидает imageUrls массив)
-    payload = build_payload(model, prompt=user_prompt, image_url=photo_url)
+    # Негативный промпт – что исключить
+    negative_prompt = (
+        "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, "
+        "SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES, STRONG_EMOTION, "
+        "OPEN_MOUTH, TEETH, TONGUE, LOOKING_AWAY, PROFILE, SIDE_FACE"
+    )
+
+    # Формируем payload (build_payload уже содержит базовые поля)
+    payload = build_payload(model, prompt=final_prompt, image_url=photo_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
-        add_balance(user_id, price)  # возвращаем токены
+        add_balance(user_id, price)
         return POPULAR_MENU
 
-    # Добавляем режим в промпт (если поддерживается)
+    # Добавляем дополнительные параметры для улучшения лица
+    payload["cfgScale"] = 0.8              # строже следовать промпту
+    payload["negative_prompt"] = negative_prompt
+    payload["sound"] = False               # без звука
     if mode == "fun":
-        payload["prompt"] = f"[FUN ATMOSPHERE] {payload['prompt']}"
+        payload["prompt"] = f"[ВЕСЁЛАЯ АТМОСФЕРА] {payload['prompt']}"
 
     processing_msg = await update.message.reply_text(
-        "🎬 Генерирую видео (оживление фото) с помощью Wan 2.6. Лицо будет максимально сохранено. Подождите до 30 секунд..."
+        "🎬 Генерирую видео (Kling 2.6). Лицо будет максимально сохранено. Подождите до 40 секунд..."
     )
 
     try:
@@ -1306,7 +1326,7 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         logger.exception("Ошибка оживления фото")
         await processing_msg.delete()
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)   # возвращаем токены при ошибке
+        add_balance(user_id, price)
         return POPULAR_MENU
 
     await processing_msg.delete()
@@ -1314,11 +1334,11 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     if result_bytes:
         await update.message.reply_video(
             video=io.BytesIO(result_bytes),
-            caption="🖼️ Видео готово (Wan 2.6, лицо сохранено)"
+            caption="🖼️ Видео готово (Kling 2.6, лицо максимально сохранено)"
         )
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Wan 2.6 (face preserved)")
+        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
         add_balance(user_id, price)
