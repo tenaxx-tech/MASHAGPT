@@ -1266,159 +1266,90 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     user_prompt = None if text.lower() == "пропустить" else text
 
-    # Рабочая модель Kling 2.6 (гарантированно есть в API)
-    model = "kling-2-6-image-to-video"
-    price = MODEL_PRICES.get(model, 6)   # 6 токенов
+    # Список моделей для проверки (в порядке приоритета)
+    candidate_models = [
+        ("wan-2-5-image-to-video", 3),
+        ("sora-2-image-to-video", 3),
+        ("veo-3-1", 5),
+        ("kling-v2-5-turbo-image-to-video-pro", 5),
+        ("grok-imagine-image-to-video", 0),
+    ]
 
-    # Проверка баланса и списание
-    if get_user_balance(user_id) < price:
-        await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}, у вас: {get_user_balance(user_id)}.", reply_markup=get_main_keyboard())
-        return POPULAR_MENU
-    if not deduct_balance(user_id, price):
-        await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
-        return POPULAR_MENU
-
-    # Усиленный промпт (русский + английский)
+    # Подготовка промпта
     if not user_prompt:
-        user_prompt = "Естественное плавное движение: лёгкий поворот головы, моргание, спокойное дыхание. Лицо полностью сохранено."
+        user_prompt = "Natural gentle movement, slight head turn, blinking, calm expression. Face must remain identical to the input photo."
     face_prompt_ru = (
         "КРИТИЧЕСКИ ВАЖНО: ЛИЦО ДОЛЖНО ОСТАТЬСЯ ИДЕНТИЧНЫМ ИСХОДНОМУ ФОТО. "
-        "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ, НЕ ИСКАТЬ ГРИМАСЫ. "
-        "СОХРАНИТЬ ТОЧНЫЕ ПРОПОРЦИИ, ТЕКСТУРУ КОЖИ, ВЗГЛЯД. "
-        "ДВИЖЕНИЯ ТОЛЬКО ЕСТЕСТВЕННЫЕ: ЛЁГКИЙ ПОВОРОТ, МОРГАНИЕ. "
+        "НЕ МЕНЯТЬ ЧЕРТЫ, НЕ ДОБАВЛЯТЬ УЛЫБКУ. ТОЛЬКО ЕСТЕСТВЕННЫЕ ДВИЖЕНИЯ. "
     )
     face_prompt_en = (
         "CRITICAL: THE FACE MUST REMAIN IDENTICAL TO THE INPUT PHOTO. "
-        "DO NOT CHANGE FACIAL FEATURES, DO NOT ADD SMILE, DO NOT CREATE GRIMACES. "
-        "PRESERVE EXACT PROPORTIONS, SKIN TEXTURE, GAZE. "
-        "ONLY NATURAL MOVEMENTS: SLIGHT TURN, BLINKING. "
+        "DO NOT CHANGE FACIAL FEATURES, DO NOT ADD SMILE. ONLY NATURAL MOVEMENTS. "
     )
     final_prompt = f"{face_prompt_ru} {face_prompt_en} {user_prompt}"
-
-    # Негативный промпт – что исключить
     negative_prompt = (
-        "CHANGING_FACES, DISTORTED_FACE, MERGED_FACES, EXAGGERATED_EXPRESSION, "
-        "SMILE, LAUGH, GRIMACE, BLURRY_FACE, WARPED_FEATURES, STRONG_EMOTION, "
-        "OPEN_MOUTH, TEETH, TONGUE, LOOKING_AWAY, PROFILE, SIDE_FACE"
+        "CHANGING_FACES, DISTORTED_FACE, SMILE, LAUGH, GRIMACE, BLURRY_FACE"
     )
 
-    # Формируем payload (build_payload уже содержит базовые поля)
-    payload = build_payload(model, prompt=final_prompt, image_url=photo_url)
-    if not payload:
-        await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
-        add_balance(user_id, price)
-        return POPULAR_MENU
+    success = False
+    last_error = None
+    used_model = None
+    used_price = 0
 
-    # Добавляем дополнительные параметры для улучшения лица
-    payload["cfgScale"] = 0.8              # строже следовать промпту
-    payload["negative_prompt"] = negative_prompt
-    payload["sound"] = False               # без звука
-    if mode == "fun":
-        payload["prompt"] = f"[ВЕСЁЛАЯ АТМОСФЕРА] {payload['prompt']}"
+    for model, price in candidate_models:
+        # Проверка баланса для платных моделей
+        if price > 0 and get_user_balance(user_id) < price:
+            continue
+        if price > 0:
+            if not deduct_balance(user_id, price):
+                continue
 
-    processing_msg = await update.message.reply_text(
-        "🎬 Генерирую видео (Kling 2.6). Лицо будет максимально сохранено. Подождите до 40 секунд..."
-    )
+        # Формируем payload через build_payload
+        payload = build_payload(model, prompt=final_prompt, image_url=photo_url)
+        if not payload:
+            if price > 0:
+                add_balance(user_id, price)
+            continue
 
-    try:
-        result_bytes, media_url = await masha_media_generate(model, payload)
-    except Exception as e:
-        logger.exception("Ошибка оживления фото")
-        await processing_msg.delete()
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)
-        return POPULAR_MENU
+        # Добавляем дополнительные параметры для поддерживаемых моделей
+        if model in ("wan-2-5-image-to-video", "sora-2-image-to-video", "veo-3-1", "kling-v2-5-turbo-image-to-video-pro"):
+            payload["cfgScale"] = 0.7
+            payload["negative_prompt"] = negative_prompt
+        if mode == "fun":
+            payload["prompt"] = f"[FUN MODE] {payload['prompt']}"
 
-    await processing_msg.delete()
-
-    if result_bytes:
-        await update.message.reply_video(
-            video=io.BytesIO(result_bytes),
-            caption="🖼️ Видео готово (Kling 2.6, лицо максимально сохранено)"
+        processing_msg = await update.message.reply_text(
+            f"🎬 Пробую модель {model}... (ожидание до 30 секунд)"
         )
-        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={user_prompt}")
-        save_message(user_id, "assistant", "Video generated with Kling 2.6 (face preserved)")
-    else:
-        await update.message.reply_text("❌ Не удалось получить результат.")
-        add_balance(user_id, price)
+        try:
+            result_bytes, media_url = await masha_media_generate(model, payload)
+            await processing_msg.delete()
+            await update.message.reply_video(
+                video=io.BytesIO(result_bytes),
+                caption=f"🖼️ Видео готово (модель: {model}, лицо сохранено)"
+            )
+            await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
+            save_message(user_id, "user", f"animate photo: mode={mode}, model={model}, prompt={user_prompt}")
+            save_message(user_id, "assistant", f"Video generated with {model}")
+            success = True
+            used_model = model
+            used_price = price
+            break
+        except Exception as e:
+            last_error = e
+            await processing_msg.delete()
+            if price > 0:
+                add_balance(user_id, price)
+            continue
 
-    await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
-    return POPULAR_MENU
-
-# ------------------- Остальные обработчики (без изменений) -------------------
-async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text:
-        text = update.message.text.strip()
-        if text == "🔙 Главное меню":
-            context.user_data.clear()
-            await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
-            return MAIN_MENU
-        else:
-            await update.message.reply_text("Пожалуйста, отправьте изображение.", reply_markup=get_cancel_keyboard())
-            return AWAIT_IMAGE_ONLY
-
-    if not update.message.photo:
-        await update.message.reply_text("Пожалуйста, отправьте изображение.", reply_markup=get_cancel_keyboard())
-        return AWAIT_IMAGE_ONLY
-
-    photo_file = await update.message.photo[-1].get_file()
-    image_url = photo_file.file_path
-    model = context.user_data.get('selected_model')
-    user_id = update.effective_user.id
-
-    used = get_weekly_image_count(user_id)
-    paid = False
-    if used >= 5:
-        balance = get_user_balance(user_id)
-        if balance >= PAID_IMAGE_PRICE:
-            if not deduct_balance(user_id, PAID_IMAGE_PRICE):
-                await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
-                return MAIN_MENU
-            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов.", reply_markup=get_cancel_keyboard())
-            paid = True
-        else:
-            await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.", reply_markup=get_main_keyboard())
-            return MAIN_MENU
-
-    payload = build_payload(model, image_url=image_url)
-    if not payload:
-        await update.message.reply_text("❌ Не удалось сформировать запрос.", reply_markup=get_main_keyboard())
-        if paid:
-            add_balance(user_id, PAID_IMAGE_PRICE)
-        return MAIN_MENU
-
-    stop_action = asyncio.Event()
-    action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_PHOTO, stop_action))
-    try:
-        result_bytes, media_url = await masha_media_generate(model, payload)
-    except Exception as e:
-        logger.exception("Ошибка обработки изображения")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        if paid:
-            add_balance(user_id, PAID_IMAGE_PRICE)
-        return MAIN_MENU
-    finally:
-        stop_action.set()
-        await action_task
-
-    if result_bytes:
-        compressed = await compress_image(result_bytes)
-        caption = "🖼 Результат (сжатое)"
-        if model == "recraft-remove-background":
-            caption = "🧹 Фон удалён (сжатое)"
-        elif model == "recraft-crisp-upscale":
-            caption = "✨ Улучшенное качество (сжатое)"
-        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=caption)
-        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        if not paid:
-            increment_weekly_image_count(user_id)
-        save_message(user_id, "user", f"image processing: {model}")
-        save_message(user_id, "assistant", "Изображение обработано")
-    else:
-        await update.message.reply_text("❌ Не удалось получить результат.")
-        if paid:
-            add_balance(user_id, PAID_IMAGE_PRICE)
+    if not success:
+        await update.message.reply_text(
+            f"❌ Не удалось создать видео. Ни одна модель не сработала.\n"
+            f"Последняя ошибка: {last_error}\n"
+            f"Пожалуйста, сообщите администратору.",
+            reply_markup=get_popular_menu_keyboard()
+        )
+        return POPULAR_MENU
 
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
