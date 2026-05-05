@@ -1006,6 +1006,13 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return POPULAR_MENU
 
 # ------------------- Обработчики для пунктов популярного меню -------------------
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import json
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -1015,42 +1022,79 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
         return MAIN_MENU
 
     action = context.user_data.get('pending_action')
+    
     if action == 'prompt_image':
         system_prompt = (
-            "ТЫ — ЭКСПЕРТ ПО СОЗДАНИЮ ПРОМТОВ ДЛЯ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ.\n"
-            "ПРАВИЛА, КОТОРЫЕ НЕЛЬЗЯ НАРУШАТЬ:\n"
-            "1. ТОЛЬКО РУССКИЙ ЯЗЫК, ТОЛЬКО ЗАГЛАВНЫЕ БУКВЫ.\n"
-            "2. ДЛИНА: 50–200 СЛОВ (ПОДРОБНО, НО КАЖДАЯ ФРАЗА – МЕТАФОРА).\n"
-            "3. ОБЯЗАТЕЛЬНО УКАЖИ: СТИЛЬ, ОСВЕЩЕНИЕ, КОМПОЗИЦИЮ, ЦВЕТОВУЮ ГАММУ, АТМОСФЕРУ.\n"
-            "4. ДОБАВЬ СИЛЬНУЮ ВИЗУАЛЬНУЮ МЕТАФОРУ (НЕ ПРЯМОЕ ОПИСАНИЕ).\n"
-            "5. НЕ ПИШИ СЛОВА 'ПРОМТ', 'ИЗОБРАЖЕНИЕ', 'НА КАРТИНКЕ'.\n"
-            "6. ТЕКСТ ДОЛЖЕН БЫТЬ ЛЁГКИМ ДЛЯ КОПИРОВАНИЯ: КОРОТКИЕ ПРЕДЛОЖЕНИЯ, НЕТ ЛИШНИХ ЗНАКОВ.\n\n"
-            "ПРИМЕР (ЗАГОЛОВОК ТЕМЫ: 'ЗАКАТ НАД МОРЕМ'):\n"
-            "МАСЛО, ТОЛСТЫЕ МАЗКИ. НЕБО ПОЛЫХАЕТ ОРАНЖЕВЫМИ И ПУРПУРНЫМИ ПРОРЫВАМИ. ВОДА – ТЁМНОЕ ЗЕРКАЛО, "
-            "В НЁМ ТОНЕТ СОЛНЦЕ. КАЖДАЯ ВОЛНА – РАСПЛАВЛЕННЫЙ МЕТАЛЛ. БЕРЕГ – ПЕСОК, СЛОВНО ПЕПЕЛ ПОСЛЕ ПОЖАРА. "
-            "ВДАЛИ СИЛУЭТ ЧЕЛОВЕКА, ОН ПРЕВРАЩАЕТСЯ В ТЕНЬ.\n\n"
-            "ТЕПЕРЬ СОЗДАЙ ПРОМТ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ (ТОЛЬКО ПРОМТ, НИЧЕГО ЛИШНЕГО)."
+            "Ты — эксперт по промтам для генерации изображений. Создай два промта в формате JSON (classic и hightech) по запросу пользователя.\n"
+            "Правила:\n"
+            "- Используй русский язык. В полях 'content' внутри 'text_on_image' текст должен быть ЗАГЛАВНЫМИ БУКВАМИ (крупная кириллица).\n"
+            "- В остальных полях (scene, person, background_action, mood_and_lighting) пиши обычным регистром, коротко, но визуально ёмко.\n"
+            "- Добавь поле 'brief_description' для каждого стиля. Это краткое описание сцены на русском, 10–20 слов, обычный регистр (не капс).\n"
+            "- Обязательно укажи движение, свет, цветовую гамму, атмосферу.\n"
+            "- Лицо героя — как на загруженном фото (не изменять черты).\n"
+            "- Формат: 16:9, фотореализм, высокое разрешение.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"Краткое описание классической сцены\",\n"
+            "    \"scene\": \"...\",\n"
+            "    \"atmosphere\": \"...\",\n"
+            "    \"person\": {\n"
+            "      \"description\": \"...\",\n"
+            "      \"preservation\": \"лицо максимально реалистичное, черты сохранены\"\n"
+            "    },\n"
+            "    \"background_action\": { ... },\n"
+            "    \"text_on_image\": [\n"
+            "      {\"position\": \"верхняя треть, слева\", \"content\": \"СЕГОДНЯ\", \"style\": \"крупный полупрозрачный фон, строгий шрифт\"},\n"
+            "      {\"position\": \"верхняя треть, справа\", \"content\": \"20:00\", \"style\": \"крупный ярко-оранжевый, жирный\"},\n"
+            "      {\"position\": \"нижняя треть, по центру\", \"content\": \"УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН\", \"style\": \"очень крупный белый или жёлтый, жирный, с подложкой\"}\n"
+            "    ],\n"
+            "    \"mood_and_lighting\": \"...\"\n"
+            "  },\n"
+            "  \"hightech\": {\n"
+            "    \"brief_description\": \"Краткое описание хай-тек сцены\",\n"
+            "    \"scene\": \"... (киберпанк, прозрачный поезд, неон)\",\n"
+            "    ... (аналогичная структура, но с футуристическими элементами)\n"
+            "  }\n"
+            "}\n"
+            "В поле 'background_action' можно описать фон и второстепенные объекты.\n"
+            "Текст на изображении (text_on_image) должен быть обязательно, хотя бы одна фраза.\n"
+            "Выведи только JSON-объект, без пояснений. Ключи classic и hightech обязательны.\n"
         )
-        user_prompt = f"{system_prompt}\n\nЗАПРОС: {user_input}\n\nПРОМТ (ЗАГЛАВНЫМИ, МЕТАФОРА, 50–200 СЛОВ):"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     elif action == 'prompt_video':
         system_prompt = (
-            "ТЫ — ЭКСПЕРТ ПО ДИНАМИЧЕСКИМ ПРОМТАМ ДЛЯ ВИДЕО.\n"
-            "ПРАВИЛА:\n"
-            "1. ТОЛЬКО РУССКИЙ ЯЗЫК, ТОЛЬКО ЗАГЛАВНЫЕ БУКВЫ.\n"
-            "2. ДЛИНА: 50–200 СЛОВ (ПОДРОБНО, НО МЕТАФОРИЧНО).\n"
-            "3. УКАЖИ ДВИЖЕНИЕ КАМЕРЫ (НАЕЗД, ПАНОРАМА, КРУЖЕНИЕ), ДЕЙСТВИЕ ОБЪЕКТОВ, ОСВЕЩЕНИЕ, АТМОСФЕРУ.\n"
-            "4. ДОБАВЬ МЕТАФОРУ, КОТОРАЯ ОБЪЯСНЯЕТ ДВИЖЕНИЕ ИЛИ СМЫСЛ.\n"
-            "5. НЕ ИСПОЛЬЗУЙ СЛОВА-ПАРАЗИТЫ, НЕ ПОЯСНЯЙ, ЧТО ЭТО ПРОМТ.\n"
-            "ПРИМЕР (ЗАПРОС: 'ЧЕЛОВЕК БЕЖИТ ПО ЛЕСУ'):\n"
-            "НАЕЗД КАМЕРЫ НА ЗАРОСШУЮ ТРОПУ. КОРНИ ДЕРЕВЬЕВ – ПАЛЬЦЫ, СХВАТИВШИЕ ЗЕМЛЮ. БЕГУЩАЯ ФИГУРА РАЗМЫТА, "
-            "СЛОВНО ЕЁ ТЕЛО СОСТОИТ ИЗ РАЗОРВАННЫХ КАДРОВ. СОЛНЦЕ ПРОБИВАЕТСЯ ПУЛЬСИРУЮЩИМИ ПЯТНАМИ. КАЖДЫЙ ШАГ "
-            "ПОДНИМАЕТ ВОЗДУХ, В КОТОРОМ МЕРЦАЮТ ИСКРЫ. ФИНАЛ – КАМЕРА УПИРАЕТСЯ В СПИНУ, ОНА РАЗДВАИВАЕТСЯ, "
-            "КАК ПРИЗРАК.\n\n"
-            "СОЗДАЙ ПРОМТ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ."
+            "Ты — эксперт по видеопромтам. Создай два JSON-промта (classic и hightech) для генерации видео по запросу пользователя.\n"
+            "Правила:\n"
+            "- Русский язык. В полях 'text_overlay' текст — ЗАГЛАВНЫМИ БУКВАМИ.\n"
+            "- Добавь поле 'brief_description' для каждого стиля: краткое описание видео на русском, 10–20 слов, обычный регистр.\n"
+            "- Опиши движение камеры, тайминг (0–1.5с, 1.5–3.5с, 3.5–5с), свет, цветовую палитру, формат (16:9), длительность 5 сек, 24fps.\n"
+            "- В хай-тек стиле добавь неон, глюки, цифровые элементы.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"...\",\n"
+            "    \"description\": \"...\",\n"
+            "    \"camera\": \"...\",\n"
+            "    \"lighting_palette\": \"...\",\n"
+            "    \"timeline\": [\n"
+            "      {\"time\": \"0-1.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"1.5-3.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"3.5-5s\", \"action\": \"...\"}\n"
+            "    ],\n"
+            "    \"text_overlay\": [\n"
+            "      {\"time\": \"0.5s\", \"content\": \"СЕГОДНЯ\", \"position\": \"верхний левый угол\"},\n"
+            "      ...\n"
+            "    ],\n"
+            "    \"format\": \"16:9, 5s, 24fps\"\n"
+            "  },\n"
+            "  \"hightech\": { ... аналог }\n"
+            "}\n"
+            "Только JSON, без лишнего текста."
         )
-        user_prompt = f"{system_prompt}\n\nЗАПРОС: {user_input}\n\nПРОМТ (ЗАГЛАВНЫМИ, МЕТАФОРА, ДВИЖЕНИЕ, 50–200 СЛОВ):"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     else:
-        await update.message.reply_text("ОШИБКА: ДЕЙСТВИЕ НЕ ОПРЕДЕЛЕНО.", reply_markup=get_main_keyboard())
+        await update.message.reply_text("Ошибка: действие не определено.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
     save_message(user_id, "user", user_input)
@@ -1060,46 +1104,80 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
         answer = await masha_text_generate(user_prompt, history, "deepseek-chat")
-        if answer:
-            # Принудительно переводим в верхний регистр (дубль на случай, если модель не подчинилась)
-            answer = answer.strip().upper()
-            # Удаляем частые "служебные" префиксы
-            for prefix in ["ПРОМТ:", "ВОТ ПРОМТ:", "ОТВЕТ:", "ПРОМТ ДЛЯ ИЗОБРАЖЕНИЯ:", "ПРОМТ ДЛЯ ВИДЕО:"]:
-                if answer.startswith(prefix):
-                    answer = answer[len(prefix):].strip()
-            # Сжимаем множественные переводы строк и пробелы
-            answer = ' '.join(answer.split())
-            # Если ответ получился очень коротким, предупреждаем (но не обрезаем)
-            if len(answer) < 30:
-                logger.warning(f"Сгенерирован слишком короткий промт: {answer}")
+        if not answer:
+            raise ValueError("Пустой ответ от модели")
+        # Очистка markdown-обёрток
+        answer = answer.strip()
+        if answer.startswith("```json"):
+            answer = answer[7:]
+        if answer.startswith("```"):
+            answer = answer[3:]
+        if answer.endswith("```"):
+            answer = answer[:-3]
+        answer = answer.strip()
+        # Парсим JSON
+        data = json.loads(answer)
+        classic = data.get("classic", {})
+        hightech = data.get("hightech", {})
+        classic_prompt = json.dumps(classic, ensure_ascii=False, indent=2)
+        hightech_prompt = json.dumps(hightech, ensure_ascii=False, indent=2)
+        classic_desc = classic.get("brief_description", "")
+        hightech_desc = hightech.get("brief_description", "")
     except Exception as e:
-        logger.exception("Ошибка генерации промта через deepseek")
-        await update.message.reply_text(f"❌ ОШИБКА: {str(e)[:200]}")
+        logger.exception("Ошибка генерации промтов")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:300]}")
         return POPULAR_MENU
     finally:
         stop_action.set()
         await action_task
 
-    if answer:
-        # Отправляем в моноширинном блоке – в Telegram при долгом нажатии копируется весь блок
-        # Сделаем текст крупнее через "жирный" псевдо-заголовок, но сам промт в кодовом блоке
-        await update.message.reply_text(
-            f"✨ **ПРОМТ ГОТОВ (КОПИРУЙ НИЖЕ):**\n\n"
-            f"```\n{answer}\n```",
+    # Сохраняем JSON в user_data для callback-копирования
+    context.user_data['last_classic_prompt'] = classic_prompt
+    context.user_data['last_hightech_prompt'] = hightech_prompt
+
+    # Отправляем классический стиль
+    if classic_desc:
+        await update.message.reply_text(f"📖 *Описание:* {classic_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✨ **Классический стиль (JSON)**\n\n```json\n{classic_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_classic")]]),
+        parse_mode="Markdown"
+    )
+
+    # Отправляем хай-тек стиль
+    if hightech_desc:
+        await update.message.reply_text(f"🚀 *Описание:* {hightech_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"💡 **Хай-тек стиль (JSON)**\n\n```json\n{hightech_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_hightech")]]),
+        parse_mode="Markdown"
+    )
+
+    await update.message.reply_text(
+        "💡 **Как использовать:**\n"
+        "• Нажмите на кнопку под нужным стилем → бот пришлёт JSON в отдельном сообщении, его легко скопировать.\n"
+        "• Вставьте JSON в нейросеть (Midjourney, DALL-E, Kling и др.).\n"
+        "• Текст на изображении (поля `content`) уже написан ЗАГЛАВНЫМИ, как вы просили.\n"
+        "• Описание перед JSON — только для ознакомления, оно не копируется.",
+        reply_markup=get_popular_menu_keyboard()
+    )
+    return POPULAR_MENU
+async def copy_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "copy_classic":
+        text = context.user_data.get('last_classic_prompt', "")
+    elif query.data == "copy_hightech":
+        text = context.user_data.get('last_hightech_prompt', "")
+    else:
+        return
+    if text:
+        await query.message.reply_text(
+            f"✅ Скопируйте JSON:\n\n```json\n{text}\n```",
             parse_mode="Markdown"
         )
-        save_message(user_id, "assistant", answer)
-        await update.message.reply_text(
-            "📋 **НАЖМИТЕ НА СЕРЫЙ БЛОК ВЫШЕ → ВЫДЕЛИТЬ ВЕСЬ ТЕКСТ → СКОПИРОВАТЬ**\n\n"
-            "ЗАТЕМ ВСТАВЬТЕ ЕГО В ЛЮБУЮ МОДЕЛЬ ГЕНЕРАЦИИ (ТЕКСТ → ИЗОБРАЖЕНИЕ ИЛИ ТЕКСТ → ВИДЕО).",
-            reply_markup=get_popular_menu_keyboard()
-        )
     else:
-        await update.message.reply_text("❌ НЕ УДАЛОСЬ СОЗДАТЬ ПРОМТ. ПОПРОБУЙТЕ УТОЧНИТЬ ЗАПРОС.", reply_markup=get_popular_menu_keyboard())
-
-    context.user_data.pop('pending_action', None)
-    return POPULAR_MENU
-
+        await query.message.reply_text("❌ Нет сохранённого промта. Сгенерируйте заново.")
 async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     prompt = update.message.text
