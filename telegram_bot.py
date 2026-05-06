@@ -22,7 +22,10 @@ from database import (
     get_weekly_image_count, increment_weekly_image_count
 )
 
-# Настройка логирования
+# Robokassa
+from robokassa import get_payment_url, check_result_signature, check_success_signature
+from database import create_robokassa_order, update_robokassa_order_status, get_robokassa_order
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -34,12 +37,13 @@ from PIL import Image
 
 # ------------------- Константы -------------------
 PAID_IMAGE_PRICE = 2
+ADMIN_IDS = [466829859]   # Ваш Telegram user_id
 
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
 AWAIT_FACE_SWAP_SOURCE = 10
-AWAIT_IMAGE_FOR_EDIT = 11
+AWAIT_IMAGE_FOR_EDIT = 11          # для img2img
 AWAIT_PROMPT_FOR_EDIT = 12
 AWAIT_IMAGE_FOR_AVATAR = 13
 AWAIT_AUDIO_FOR_AVATAR = 14
@@ -47,7 +51,6 @@ AWAIT_VIDEO_FOR_ANIMATE = 15
 AWAIT_IMAGE_FOR_ANIMATE = 16
 AWAIT_IMAGE_ONLY = 17
 
-# Новые состояния для популярного меню
 POPULAR_MENU = 18
 AWAIT_PROMPT_FOR_IMAGE = 19
 AWAIT_PHOTO_FOR_ANIMATE = 20
@@ -66,11 +69,8 @@ MODEL_PRICES = {
     "claude-haiku-4-5": 5, "claude-sonnet-4-5": 15, "claude-opus-4-5": 25,
     "gemini-3-flash": 3, "gemini-2.5-pro": 10, "gemini-3-pro": 16, "gemini-3-pro-image": 12,
     "z-image": 0, "grok-imagine-text-to-image": 0,
-    "codeplugtech-face-swap": 0, "cdlingram-face-swap": 0,
-    "recraft-crisp-upscale": 0, "recraft-remove-background": 0, "topaz-image-upscale": 0,
-    "flux-2": 0, "qwen-edit-multiangle": 0, "nano-banana-2": 0, "nano-banana-pro": 0,
+    "flux-2": 0, "nano-banana-2": 0, "nano-banana-pro": 0,
     "midjourney": 0, "gpt-image-1-5-text-to-image": 0, "gpt-image-1-5-image-to-image": 0,
-    "ideogram-v3-reframe": 0,
     "grok-imagine-text-to-video": 1, "wan-2-6-text-to-video": 3, "wan-2-5-text-to-video": 3,
     "wan-2-6-image-to-video": 3, "wan-2-6-video-to-video": 3, "wan-2-5-image-to-video": 3,
     "sora-2-text-to-video": 3, "sora-2-image-to-video": 3, "veo-3-1": 5,
@@ -126,6 +126,7 @@ def get_popular_menu_keyboard():
         [KeyboardButton("🧹 5. Удалить фон")],
         [KeyboardButton("✨ 6. Улучшить качество")],
         [KeyboardButton("🔄 7. Заменить лицо")],
+        [KeyboardButton("🎨 8. Редактировать изображение (img2img)")],   # НОВЫЙ ПУНКТ
         [KeyboardButton("🔙 Главное меню")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -155,18 +156,12 @@ def get_text_models_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 def get_image_models_keyboard():
+    # Только text-to-image модели
     models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
-        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
-        ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
-        ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
-        ("recraft-remove-background", "Recraft Remove Background", 0),
-        ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
-        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0), ("nano-banana-2", "Nano Banana 2", 0),
+        ("flux-2", "Flux 2", 0), ("nano-banana-2", "Nano Banana 2", 0),
         ("nano-banana-pro", "Nano Banana Pro", 0), ("midjourney", "Midjourney", 0),
-        ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0),
-        ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
-        ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
+        ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0)
     ]
     keyboard = []
     for model_id, label, price in models:
@@ -456,7 +451,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     update_user_activity(user_id)
     await update.message.reply_text(
-        "🤖 *Привет! Я бот с поддержью ИИ (MashaGPT).*\n\n"
+        "🤖 *Привет! Я бот с поддержкой ИИ Дмитрия Урецкого.*\n\n"
         "✏️ Текст – бесплатно, без лимита\n"
         "🖼 Изображения – бесплатно, 5 в неделю\n"
         "🎬 Видео, 🎵 Аудио, ✨ Обработка – платно (токены)\n\n"
@@ -480,13 +475,40 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bal = get_user_balance(user_id)
     img_used = get_weekly_image_count(user_id)
     img_left = max(0, 5 - img_used)
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Пополнить промты", callback_data="topup")]])
+    
+    text = (
+        f"👤 **Ваш ID:** `{user_id}`\n"
+        f"💰 **Баланс:** {bal} промтов\n"
+        f"🖼 **Бесплатные изображения:** {img_used}/5 использовано на этой неделе (осталось {img_left})\n"
+        f"💎 **Платное изображение** (после лимита): {PAID_IMAGE_PRICE} промтов\n\n"
+        f"📞 **По вопросам:** [Написать создателю](https://t.me/Dmitriy_Uretskiy)"
+    )
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Пополнить промты (Stars)", callback_data="topup")],
+        [InlineKeyboardButton("💳 Пополнить через Робокассу", callback_data="robokassa_topup")],
+        [InlineKeyboardButton("📞 Поддержка", url="https://t.me/Dmitriy_Uretskiy")]
+    ])
+    
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
+        return
+    try:
+        target_user_id = int(context.args[0])
+        amount = int(context.args[1])
+    except (IndexError, ValueError):
+        await update.message.reply_text("❌ Использование: /add_balance <user_id> <количество_промтов>\nПример: /add_balance 466829859 100")
+        return
+    add_balance(target_user_id, amount)
+    new_balance = get_user_balance(target_user_id)
     await update.message.reply_text(
-        f"💰 Ваш баланс: {bal} промтов\n"
-        f"🖼 Бесплатные изображения: {img_used}/5 использовано на этой неделе\n"
-        f"   Осталось бесплатных: {img_left}\n"
-        f"💎 Платное изображение (после лимита): {PAID_IMAGE_PRICE} промтов",
-        reply_markup=keyboard
+        f"✅ Пользователю `{target_user_id}` начислено {amount} промтов.\n"
+        f"💰 Новый баланс: {new_balance} промтов.",
+        parse_mode="Markdown"
     )
 
 async def send_topup_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int = None):
@@ -567,12 +589,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Определяем категорию по текущему состоянию (хранится в context.user_data)
-    # В этом обработчике мы будем определять модель по тексту кнопки.
-    # Для каждой категории (текст, изображения, видео, аудио, аватар) есть свой набор моделей.
-    # Мы проверим все возможные модели.
-
-    # Сначала проверим текстовые модели
+    # Проверяем текстовые модели
     text_models = [
         ("gpt-4o-mini", "GPT-4o mini", 0), ("gpt-5-mini", "GPT-5 mini", 0),
         ("gpt-5-nano", "GPT-5 nano", 0), ("gpt-4.1-nano", "GPT-4.1 nano", 0),
@@ -598,19 +615,12 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите ваш запрос:", reply_markup=get_cancel_keyboard())
             return DIALOG
 
-    # Проверяем модели изображений (бесплатные)
+    # Проверяем модели изображений (чистые text-to-image)
     image_models = [
         ("z-image", "Z-Image", 0), ("grok-imagine-text-to-image", "Grok Imagine", 0),
-        ("codeplugtech-face-swap", "Face Swap (CodePlugTech)", 0),
-        ("cdlingram-face-swap", "Face Swap (CDIngram)", 0),
-        ("recraft-crisp-upscale", "Recraft Crisp Upscale", 0),
-        ("recraft-remove-background", "Recraft Remove Background", 0),
-        ("topaz-image-upscale", "Topaz Image Upscale", 0), ("flux-2", "Flux 2", 0),
-        ("qwen-edit-multiangle", "Qwen Edit Multiangle", 0), ("nano-banana-2", "Nano Banana 2", 0),
+        ("flux-2", "Flux 2", 0), ("nano-banana-2", "Nano Banana 2", 0),
         ("nano-banana-pro", "Nano Banana Pro", 0), ("midjourney", "Midjourney", 0),
-        ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0),
-        ("gpt-image-1-5-image-to-image", "GPT Image 1.5 (img2img)", 0),
-        ("ideogram-v3-reframe", "Ideogram V3 Reframe", 0)
+        ("gpt-image-1-5-text-to-image", "GPT Image 1.5 (txt2img)", 0)
     ]
     for model_id, label, price in image_models:
         btn_text = f"{label} (бесплатно)"
@@ -619,41 +629,13 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'image'
             context.user_data['media_category'] = 'image'
-            # Определяем тип ввода
-            input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
-            if input_type == ("image", "image"):
-                await update.message.reply_text(
-                    "🔹 Замена лица\n\n"
-                    "1️⃣ Отправьте **целевое изображение** (куда вставить лицо)\n"
-                    "2️⃣ Затем отправьте **изображение-источник лица**\n\n"
-                    "Отправьте первое фото:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                return AWAIT_FACE_SWAP_TARGET
-            elif input_type == ("image", "text"):
-                await update.message.reply_text(
-                    "🔹 Редактирование изображения\n\n"
-                    "1️⃣ Отправьте **изображение**, которое хотите изменить\n"
-                    "2️⃣ Затем отправьте **текстовое описание** изменений\n\n"
-                    "Отправьте первое фото:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                return AWAIT_IMAGE_FOR_EDIT
-            elif input_type == ("image",):
-                await update.message.reply_text(
-                    "🔹 Обработка одного изображения\n\n"
-                    "Отправьте **изображение**:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                return AWAIT_IMAGE_ONLY
-            else:
-                await update.message.reply_text(
-                    f"Выбрана модель: {label}\n\nВведите текстовое описание:",
-                    reply_markup=get_cancel_keyboard()
-                )
-                return AWAIT_PROMPT
+            await update.message.reply_text(
+                f"Выбрана модель: {label}\n\nВведите текстовое описание:",
+                reply_markup=get_cancel_keyboard()
+            )
+            return AWAIT_PROMPT
 
-    # Проверяем модели видео (платные, но все они в списке MODEL_PRICES имеют ненулевую цену)
+    # Проверяем модели видео (оставлено как в предыдущей версии)
     video_models = [
         ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
         ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
@@ -683,7 +665,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['model_price'] = price
             context.user_data['selected_category'] = 'video'
             context.user_data['media_category'] = 'video'
-            # Проверяем тип ввода
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("video", "image"):
                 await update.message.reply_text(
@@ -771,7 +752,6 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 return AWAIT_PROMPT
 
-    # Если ничего не найдено
     await update.message.reply_text("Пожалуйста, выберите модель из списка или вернитесь в главное меню.", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
@@ -802,6 +782,12 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
         answer = await masha_text_generate(user_message, history, model)
+    except Exception as e:
+        logger.exception("Ошибка генерации текста")
+        if price > 0:
+            add_balance(user_id, price)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+        return DIALOG
     finally:
         stop_action.set()
         await action_task
@@ -838,6 +824,7 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MAIN_MENU
 
     used = 0
+    paid = False
     if category == "image" and price == 0:
         used = get_weekly_image_count(user_id)
         if used >= 5:
@@ -851,8 +838,6 @@ async def handle_media_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.", reply_markup=get_main_keyboard())
                 return MAIN_MENU
-        else:
-            paid = False
     elif price > 0:
         if get_user_balance(user_id) < price:
             await update.message.reply_text(f"❌ Недостаточно промтов. Нужно: {price}.", reply_markup=get_main_keyboard())
@@ -988,6 +973,20 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['pending_action'] = 'face_swap'
         return POPULAR_MENU
 
+    # НОВЫЙ ПУНКТ: Редактирование изображения (img2img)
+    elif text == "🎨 8. Редактировать изображение (img2img)":
+        context.user_data['selected_model'] = 'gpt-image-1-5-image-to-image'
+        context.user_data['model_price'] = 0
+        context.user_data['media_category'] = 'image'
+        await update.message.reply_text(
+            "🔹 Редактирование изображения по описанию (img2img)\n\n"
+            "1️⃣ Отправьте **изображение**, которое хотите изменить\n"
+            "2️⃣ Затем отправьте **текстовое описание** изменений (на русском, поддерживается кириллица)\n\n"
+            "Отправьте первое фото:",
+            reply_markup=get_cancel_keyboard()
+        )
+        return AWAIT_IMAGE_FOR_EDIT
+
     elif text in ("CodePlugTech (быстрый, бесплатно)", "CDIngram (качественный, бесплатно)"):
         model_id = "codeplugtech-face-swap" if "CodePlugTech" in text else "cdlingram-face-swap"
         context.user_data['selected_model'] = model_id
@@ -1007,6 +1006,13 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return POPULAR_MENU
 
 # ------------------- Обработчики для пунктов популярного меню -------------------
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import json
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -1016,22 +1022,77 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
         return MAIN_MENU
 
     action = context.user_data.get('pending_action')
+    
     if action == 'prompt_image':
         system_prompt = (
-            "Ты — эксперт по созданию промтов для генерации изображений. "
-            "Преврати краткое описание пользователя в подробный, качественный промт на русском языке. "
-            "Добавь детали: стиль, освещение, композицию, цветовую гамму, атмосферу. "
-            "Промт должен быть на русском, длиной 50-200 слов. Только промт, без лишних слов."
+            "Ты — эксперт по промтам для генерации изображений. Создай два промта в формате JSON (classic и hightech) по запросу пользователя.\n"
+            "Правила:\n"
+            "- Используй русский язык. В полях 'content' внутри 'text_on_image' текст должен быть ЗАГЛАВНЫМИ БУКВАМИ (крупная кириллица).\n"
+            "- В остальных полях (scene, person, background_action, mood_and_lighting) пиши обычным регистром, коротко, но визуально ёмко.\n"
+            "- Добавь поле 'brief_description' для каждого стиля. Это краткое описание сцены на русском, 10–20 слов, обычный регистр (не капс).\n"
+            "- Обязательно укажи движение, свет, цветовую гамму, атмосферу.\n"
+            "- Лицо героя — как на загруженном фото (не изменять черты).\n"
+            "- Формат: 16:9, фотореализм, высокое разрешение.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"Краткое описание классической сцены\",\n"
+            "    \"scene\": \"...\",\n"
+            "    \"atmosphere\": \"...\",\n"
+            "    \"person\": {\n"
+            "      \"description\": \"...\",\n"
+            "      \"preservation\": \"лицо максимально реалистичное, черты сохранены\"\n"
+            "    },\n"
+            "    \"background_action\": { ... },\n"
+            "    \"text_on_image\": [\n"
+            "      {\"position\": \"верхняя треть, слева\", \"content\": \"СЕГОДНЯ\", \"style\": \"крупный полупрозрачный фон, строгий шрифт\"},\n"
+            "      {\"position\": \"верхняя треть, справа\", \"content\": \"20:00\", \"style\": \"крупный ярко-оранжевый, жирный\"},\n"
+            "      {\"position\": \"нижняя треть, по центру\", \"content\": \"УСПЕТЬ В ПОСЛЕДНИЙ ВАГОН\", \"style\": \"очень крупный белый или жёлтый, жирный, с подложкой\"}\n"
+            "    ],\n"
+            "    \"mood_and_lighting\": \"...\"\n"
+            "  },\n"
+            "  \"hightech\": {\n"
+            "    \"brief_description\": \"Краткое описание хай-тек сцены\",\n"
+            "    \"scene\": \"... (киберпанк, прозрачный поезд, неон)\",\n"
+            "    ... (аналогичная структура, но с футуристическими элементами)\n"
+            "  }\n"
+            "}\n"
+            "В поле 'background_action' можно описать фон и второстепенные объекты.\n"
+            "Текст на изображении (text_on_image) должен быть обязательно, хотя бы одна фраза.\n"
+            "Выведи только JSON-объект, без пояснений. Ключи classic и hightech обязательны.\n"
         )
-        user_prompt = f"Создай промт для изображения по запросу: {user_input}"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     elif action == 'prompt_video':
         system_prompt = (
-            "Ты — эксперт по созданию промтов для генерации видео. "
-            "Преврати краткое описание пользователя в подробный промт на русском языке. "
-            "Укажи движение камеры, действия объектов, освещение, атмосферу. "
-            "Промт должен быть на русском, длиной 50-200 слов. Только промт, без лишних слов."
+            "Ты — эксперт по видеопромтам. Создай два JSON-промта (classic и hightech) для генерации видео по запросу пользователя.\n"
+            "Правила:\n"
+            "- Русский язык. В полях 'text_overlay' текст — ЗАГЛАВНЫМИ БУКВАМИ.\n"
+            "- Добавь поле 'brief_description' для каждого стиля: краткое описание видео на русском, 10–20 слов, обычный регистр.\n"
+            "- Опиши движение камеры, тайминг (0–1.5с, 1.5–3.5с, 3.5–5с), свет, цветовую палитру, формат (16:9), длительность 5 сек, 24fps.\n"
+            "- В хай-тек стиле добавь неон, глюки, цифровые элементы.\n"
+            "Структура JSON:\n"
+            "{\n"
+            "  \"classic\": {\n"
+            "    \"brief_description\": \"...\",\n"
+            "    \"description\": \"...\",\n"
+            "    \"camera\": \"...\",\n"
+            "    \"lighting_palette\": \"...\",\n"
+            "    \"timeline\": [\n"
+            "      {\"time\": \"0-1.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"1.5-3.5s\", \"action\": \"...\"},\n"
+            "      {\"time\": \"3.5-5s\", \"action\": \"...\"}\n"
+            "    ],\n"
+            "    \"text_overlay\": [\n"
+            "      {\"time\": \"0.5s\", \"content\": \"СЕГОДНЯ\", \"position\": \"верхний левый угол\"},\n"
+            "      ...\n"
+            "    ],\n"
+            "    \"format\": \"16:9, 5s, 24fps\"\n"
+            "  },\n"
+            "  \"hightech\": { ... аналог }\n"
+            "}\n"
+            "Только JSON, без лишнего текста."
         )
-        user_prompt = f"Создай промт для видео по запросу: {user_input}"
+        user_prompt = f"{system_prompt}\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ: «{user_input}»\n\nТОЛЬКО JSON:"
     else:
         await update.message.reply_text("Ошибка: действие не определено.", reply_markup=get_main_keyboard())
         return MAIN_MENU
@@ -1042,25 +1103,81 @@ async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_T
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.TYPING, stop_action))
     try:
-        # Используем deepseek-chat для генерации промта
         answer = await masha_text_generate(user_prompt, history, "deepseek-chat")
+        if not answer:
+            raise ValueError("Пустой ответ от модели")
+        # Очистка markdown-обёрток
+        answer = answer.strip()
+        if answer.startswith("```json"):
+            answer = answer[7:]
+        if answer.startswith("```"):
+            answer = answer[3:]
+        if answer.endswith("```"):
+            answer = answer[:-3]
+        answer = answer.strip()
+        # Парсим JSON
+        data = json.loads(answer)
+        classic = data.get("classic", {})
+        hightech = data.get("hightech", {})
+        classic_prompt = json.dumps(classic, ensure_ascii=False, indent=2)
+        hightech_prompt = json.dumps(hightech, ensure_ascii=False, indent=2)
+        classic_desc = classic.get("brief_description", "")
+        hightech_desc = hightech.get("brief_description", "")
+    except Exception as e:
+        logger.exception("Ошибка генерации промтов")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:300]}")
+        return POPULAR_MENU
     finally:
         stop_action.set()
         await action_task
 
-    if answer:
-        await update.message.reply_text(f"✨ **Сгенерированный промт:**\n\n{answer}", parse_mode="Markdown")
-        save_message(user_id, "assistant", answer)
-        await update.message.reply_text(
-            "Вы можете скопировать этот промт и использовать его в других функциях бота (например, «Текст в изображение»).",
-            reply_markup=get_popular_menu_keyboard()
+    # Сохраняем JSON в user_data для callback-копирования
+    context.user_data['last_classic_prompt'] = classic_prompt
+    context.user_data['last_hightech_prompt'] = hightech_prompt
+
+    # Отправляем классический стиль
+    if classic_desc:
+        await update.message.reply_text(f"📖 *Описание:* {classic_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✨ **Классический стиль (JSON)**\n\n```json\n{classic_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_classic")]]),
+        parse_mode="Markdown"
+    )
+
+    # Отправляем хай-тек стиль
+    if hightech_desc:
+        await update.message.reply_text(f"🚀 *Описание:* {hightech_desc}", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"💡 **Хай-тек стиль (JSON)**\n\n```json\n{hightech_prompt}\n```",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Копировать JSON", callback_data="copy_hightech")]]),
+        parse_mode="Markdown"
+    )
+
+    await update.message.reply_text(
+        "💡 **Как использовать:**\n"
+        "• Нажмите на кнопку под нужным стилем → бот пришлёт JSON в отдельном сообщении, его легко скопировать.\n"
+        "• Вставьте JSON в нейросеть (Midjourney, DALL-E, Kling и др.).\n"
+        "• Текст на изображении (поля `content`) уже написан ЗАГЛАВНЫМИ, как вы просили.\n"
+        "• Описание перед JSON — только для ознакомления, оно не копируется.",
+        reply_markup=get_popular_menu_keyboard()
+    )
+    return POPULAR_MENU
+async def copy_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "copy_classic":
+        text = context.user_data.get('last_classic_prompt', "")
+    elif query.data == "copy_hightech":
+        text = context.user_data.get('last_hightech_prompt', "")
+    else:
+        return
+    if text:
+        await query.message.reply_text(
+            f"✅ Скопируйте JSON:\n\n```json\n{text}\n```",
+            parse_mode="Markdown"
         )
     else:
-        await update.message.reply_text("❌ Не удалось сгенерировать промт. Попробуйте ещё раз.", reply_markup=get_popular_menu_keyboard())
-
-    context.user_data.pop('pending_action', None)
-    return POPULAR_MENU
-
+        await query.message.reply_text("❌ Нет сохранённого промта. Сгенерируйте заново.")
 async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     prompt = update.message.text
@@ -1186,12 +1303,21 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     prompt = None if text.lower() == "пропустить" else text
 
-    model = "grok-imagine-image-to-video"
+    # Используем Kling 1.6 Image-to-Video (сохраняет лица, без звука)
+    model = "kling-2-6-image-to-video"
+    
+    # Стандартный промпт, если пользователь ничего не ввёл
+    if not prompt:
+        prompt = "ПЛАВНОЕ ДВИЖЕНИЕ: ЛЁГКИЙ ПОВОРОТ ГОЛОВЫ, ЕСТЕСТВЕННОЕ МОРГАНИЕ, ЛЁГКАЯ УЛЫБКА"
+    
     payload = build_payload(model, prompt=prompt, image_url=photo_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
         return MAIN_MENU
-    payload['mode'] = mode
+    
+    # Режим 'normal' или 'fun' — для Kling добавляем в описание
+    if mode == "fun":
+        prompt = f"[ВЕСЁЛАЯ АТМОСФЕРА] {prompt}"
 
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
@@ -1206,10 +1332,10 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await action_task
 
     if result_bytes:
-        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео")
+        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео (Kling 1.6, сохранение лиц)")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         save_message(user_id, "user", f"animate photo: mode={mode}, prompt={prompt}")
-        save_message(user_id, "assistant", "Видео создано")
+        save_message(user_id, "assistant", "Видео создано с сохранением лица")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
 
@@ -1295,7 +1421,7 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- Обработчики для face swap, edit, avatar, animate (из вашего предыдущего кода) -------------------
+# ------------------- Обработчики для face swap, edit, avatar, animate -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1399,6 +1525,8 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+
+# Обработчик редактирования изображения (img2img) – получает фото и переходит к запросу промпта
 async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1407,7 +1535,10 @@ async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
             return MAIN_MENU
         else:
-            await update.message.reply_text("Пожалуйста, отправьте изображение, которое хотите изменить.", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text(
+                "Пожалуйста, отправьте изображение, которое хотите изменить.",
+                reply_markup=get_cancel_keyboard()
+            )
             return AWAIT_IMAGE_FOR_EDIT
 
     if not update.message.photo:
@@ -1418,10 +1549,11 @@ async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     photo_url = photo_file.file_path
     context.user_data['edit_image_url'] = photo_url
     await update.message.reply_text(
-        "✅ Изображение получено. Теперь отправьте **текстовое описание** изменений:",
+        "✅ Изображение получено. Теперь отправьте **текстовое описание** изменений (на русском):",
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_PROMPT_FOR_EDIT
+
 
 async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prompt_text = update.message.text
@@ -1466,7 +1598,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
     except Exception as e:
-        logger.exception("Ошибка редактирования изображения")
+        logger.exception("Ошибка редактирования изображения (img2img)")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
         if paid:
             add_balance(user_id, PAID_IMAGE_PRICE)
@@ -1481,7 +1613,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         if not paid:
             increment_weekly_image_count(user_id)
-        save_message(user_id, "user", f"edit image: {prompt_text}")
+        save_message(user_id, "user", f"edit image (img2img): {prompt_text}")
         save_message(user_id, "assistant", "Изображение отредактировано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
@@ -1490,6 +1622,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
+
 
 async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1514,6 +1647,7 @@ async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_AUDIO_FOR_AVATAR
+
 
 async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1582,6 +1716,7 @@ async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+
 async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1605,6 +1740,7 @@ async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_IMAGE_FOR_ANIMATE
+
 
 async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1670,7 +1806,62 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ------------------- Обработчики платежей -------------------
+
+# ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
+async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("100 ₽", callback_data="robokassa_100")],
+        [InlineKeyboardButton("250 ₽", callback_data="robokassa_250")],
+        [InlineKeyboardButton("500 ₽", callback_data="robokassa_500")],
+        [InlineKeyboardButton("1000 ₽", callback_data="robokassa_1000")],
+    ])
+    await query.message.reply_text(
+        "💰 Выберите сумму пополнения через Робокассу:",
+        reply_markup=keyboard
+    )
+
+async def handle_robokassa_amount_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data = query.data
+    if not data.startswith("robokassa_"):
+        return
+
+    try:
+        amount = int(data.split("_")[1])
+    except (IndexError, ValueError):
+        await query.message.reply_text("❌ Неверная сумма.")
+        return
+
+    if amount < 100:
+        await query.message.reply_text("Минимальная сумма 100 руб.")
+        return
+
+    import time
+    inv_id = int(time.time() * 100) % 10**9
+    create_robokassa_order(inv_id, user_id, amount)
+
+    link = get_payment_url(inv_id, amount, description=f"Пополнение баланса на {amount} промтов")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Перейти к оплате", url=link)]
+    ])
+
+    await query.message.reply_text(
+        f"Счёт на сумму {amount} руб. создан.\n\n"
+        f"Нажмите на кнопку ниже, чтобы оплатить через Robokassa.\n"
+        f"После оплаты ваш баланс пополнится автоматически.\n\n"
+        f"Номер заказа: `{inv_id}`",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await query.message.reply_text("Вы можете продолжить работу:", reply_markup=get_main_keyboard())
+
+# ------------------- Обработчики платежей (Stars) -------------------
 async def pre_checkout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     if query.invoice_payload == "topup_100":
@@ -1693,17 +1884,95 @@ async def inline_topup_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "topup":
         await send_topup_invoice(update, context, chat_id=query.message.chat_id)
 
-# ------------------- Health check сервер -------------------
-async def run_health_check_server(port):
-    app_web = web.Application()
+# ------------------- Веб-сервер для health и Robokassa -------------------
+async def run_web_server_with_robokassa(port, bot_instance):
+    web_app = web.Application()
+    
     async def health(request):
         return web.Response(text="OK")
-    app_web.router.add_get('/health', health)
-    runner = web.AppRunner(app_web)
+    
+    async def robokassa_result(request):
+        data = await request.post()
+        params = dict(data)
+        logger.info(f"Robokassa result notification: {params}")
+        
+        if not check_result_signature(params):
+            logger.error("Invalid signature for result notification")
+            return web.Response(text="bad sign", status=400)
+        
+        inv_id = int(params.get("InvId"))
+        out_sum = float(params.get("OutSum"))
+        order = get_robokassa_order(inv_id)
+        
+        if not order:
+            logger.error(f"Order {inv_id} not found")
+            return web.Response(text=f"Order {inv_id} not found", status=404)
+        
+        if order["status"] == "success":
+            return web.Response(text=f"OK{inv_id}")
+        
+        if abs(order["amount"] - out_sum) > 0.01:
+            logger.error(f"Amount mismatch: {order['amount']} vs {out_sum}")
+            return web.Response(text="amount mismatch", status=400)
+        
+        user_id = order["user_id"]
+        add_balance(user_id, order["amount"])
+        update_robokassa_order_status(inv_id, "success")
+        
+        try:
+            await bot_instance.send_message(
+                chat_id=user_id,
+                text=f"✅ Ваш баланс пополнен на {order['amount']} промтов через Robokassa!"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить пользователя {user_id}: {e}")
+        
+        return web.Response(text=f"OK{inv_id}")
+    
+    async def robokassa_success(request):
+        params = dict(request.query)
+        logger.info(f"Robokassa success redirect: {params}")
+        if not check_success_signature(params):
+            return web.Response(text="bad sign", status=400)
+        inv_id = params.get("InvId")
+        html = f"""
+        <html>
+        <head><title>Оплата успешна</title></head>
+        <body>
+            <h1>Спасибо за оплату!</h1>
+            <p>Ваш заказ №{inv_id} оплачен. Баланс пополнен.</p>
+            <p>Вы можете вернуться в телеграм-бота и продолжить пользоваться сервисом.</p>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+    
+    async def robokassa_fail(request):
+        params = dict(request.query)
+        logger.info(f"Robokassa fail redirect: {params}")
+        inv_id = params.get("InvId")
+        html = f"""
+        <html>
+        <head><title>Оплата не удалась</title></head>
+        <body>
+            <h1>Оплата не была завершена</h1>
+            <p>Заказ №{inv_id}. Если вы не оплачивали, попробуйте ещё раз.</p>
+            <p>Вернитесь в бота и создайте новый счёт.</p>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+    
+    web_app.router.add_get('/health', health)
+    web_app.router.add_post('/robokassa/result', robokassa_result)
+    web_app.router.add_get('/robokassa/success', robokassa_success)
+    web_app.router.add_get('/robokassa/fail', robokassa_fail)
+    
+    runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logger.info(f"Health check сервер запущен на порту {port}")
+    logger.info(f"Web server (health + robokassa) запущен на порту {port}")
     await asyncio.Event().wait()
 
 # ------------------- Запуск -------------------
@@ -1718,7 +1987,11 @@ async def main_async():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
+                CallbackQueryHandler(inline_robokassa_topup, pattern="robokassa_topup"),
+                CallbackQueryHandler(handle_robokassa_amount_choice, pattern="^robokassa_\\d+$"),
+            ],
             TEXT_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             IMAGE_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             VIDEO_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
@@ -1727,28 +2000,46 @@ async def main_async():
             AVATAR_GEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_model_selection)],
             DIALOG: [MessageHandler(filters.TEXT & ~filters.COMMAND, start_dialog)],
             AWAIT_PROMPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_input)],
-            AWAIT_FACE_SWAP_TARGET: [MessageHandler(filters.PHOTO, handle_face_swap_target),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)],
-            AWAIT_FACE_SWAP_SOURCE: [MessageHandler(filters.PHOTO, handle_face_swap_source),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)],
-            AWAIT_IMAGE_FOR_EDIT: [MessageHandler(filters.PHOTO, handle_edit_image),
-                                   MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)],
+            AWAIT_FACE_SWAP_TARGET: [
+                MessageHandler(filters.PHOTO, handle_face_swap_target),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_target)
+            ],
+            AWAIT_FACE_SWAP_SOURCE: [
+                MessageHandler(filters.PHOTO, handle_face_swap_source),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_face_swap_source)
+            ],
+            AWAIT_IMAGE_FOR_EDIT: [
+                MessageHandler(filters.PHOTO, handle_edit_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_image)
+            ],
             AWAIT_PROMPT_FOR_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_prompt)],
-            AWAIT_IMAGE_FOR_AVATAR: [MessageHandler(filters.PHOTO, handle_avatar_image),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)],
-            AWAIT_AUDIO_FOR_AVATAR: [MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
-                                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)],
-            AWAIT_VIDEO_FOR_ANIMATE: [MessageHandler(filters.VIDEO, handle_animate_video),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)],
-            AWAIT_IMAGE_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_image),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)],
-            AWAIT_IMAGE_ONLY: [MessageHandler(filters.PHOTO, handle_single_image),
-                               MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)],
+            AWAIT_IMAGE_FOR_AVATAR: [
+                MessageHandler(filters.PHOTO, handle_avatar_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_image)
+            ],
+            AWAIT_AUDIO_FOR_AVATAR: [
+                MessageHandler(filters.AUDIO | filters.VOICE, handle_avatar_audio),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_avatar_audio)
+            ],
+            AWAIT_VIDEO_FOR_ANIMATE: [
+                MessageHandler(filters.VIDEO, handle_animate_video),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_video)
+            ],
+            AWAIT_IMAGE_FOR_ANIMATE: [
+                MessageHandler(filters.PHOTO, handle_animate_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_image)
+            ],
+            AWAIT_IMAGE_ONLY: [
+                MessageHandler(filters.PHOTO, handle_single_image),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_single_image)
+            ],
             POPULAR_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_popular_menu)],
             AWAIT_PROMPT_FOR_DEEPSEEK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_deepseek_prompt)],
             AWAIT_PROMPT_FOR_IMAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_to_image)],
-            AWAIT_PHOTO_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_photo_photo),
-                                      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)],
+            AWAIT_PHOTO_FOR_ANIMATE: [
+                MessageHandler(filters.PHOTO, handle_animate_photo_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
+            ],
             AWAIT_MODE_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_mode)],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
         },
@@ -1756,12 +2047,13 @@ async def main_async():
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("clear", clear_dialog))
+    app.add_handler(CommandHandler("add_balance", add_balance_command))
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
 
     port = int(os.getenv("PORT", 8080))
-    asyncio.create_task(run_health_check_server(port))
+    asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
 
     logger.info("Запуск бота в режиме polling")
     await app.initialize()
