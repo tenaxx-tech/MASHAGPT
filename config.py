@@ -8,6 +8,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN не задан")
     sys.exit(1)
+
 # Felo AI
 FELO_API_KEY = os.getenv("FELO_API_KEY", "YOUR_FELO_API_KEY")
 FELO_API_URL = os.getenv("FELO_API_URL", "https://openapi.felo.ai/v2/chat")
@@ -39,4 +40,8 @@ ROBOKASSA_FAIL_URL = os.getenv("ROBOKASSA_FAIL_URL")
 
 if not ROBOKASSA_LOGIN:
     print("❌ ROBOKASSA_LOGIN не задан в .env")
+    sys.exit(1)
+
+if not ROBOKASSA_PASSWORD1 or not ROBOKASSA_PASSWORD2:
+    print("❌ ROBOKASSA_PASSWORD1 или ROBOKASSA_PASSWORD2 не заданы в .env")
     sys.exit(1)
