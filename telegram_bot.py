@@ -396,14 +396,10 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
             return None
         return {"prompt": prompt, "image": image_url}
     if model == "grok-imagine-image-to-video":
-    payload = {
-        "imageUrl": image_url,
-        "mode": "normal",
-        "aspectRatio": "16:9"          # <-- обязательный параметр
-    }
-    if prompt:
-        payload["prompt"] = prompt
-    return payload
+        payload = {"imageUrl": image_url, "mode": "normal"}
+        if prompt:
+            payload["prompt"] = prompt
+        return payload
     payloads = {
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
         "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
@@ -2046,7 +2042,6 @@ async def main_async():
     app.add_handler(PreCheckoutQueryHandler(pre_checkout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(inline_topup_callback, pattern="topup"))
-    app.add_handler(CallbackQueryHandler(copy_prompt_callback, pattern="^copy_(classic|hightech)$"))
 
     port = int(os.getenv("PORT", 8080))
     asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
