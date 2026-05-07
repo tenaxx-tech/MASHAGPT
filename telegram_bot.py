@@ -638,7 +638,7 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             )
             return AWAIT_PROMPT
 
-    # Проверяем модели видео (оставлено как в предыдущей версии)
+    # Проверяем модели видео
     video_models = [
         ("grok-imagine-text-to-video", "Grok Imagine Video", 1),
         ("wan-2-6-text-to-video", "Wan 2.6 (txt2vid)", 3),
@@ -921,10 +921,11 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif text == "🖼️ 3. Оживить фото":
         context.user_data['pending_action'] = 'animate_photo'
+        # Обновлённое сообщение с указанием платы и модели
         await update.message.reply_text(
+            "🔹 **Оживление фото** (модель Wan 2.6, платно: 3 промта)\n\n"
             "Отправьте **фото**, которое хотите оживить (JPEG/PNG).\n"
-            "Затем выберите режим анимации: Normal (обычный) или Fun (весёлый).\n\n"
-            "Отправьте фото:",
+            "Затем вы сможете добавить текстовое описание движения (необязательно).",
             reply_markup=get_cancel_keyboard()
         )
         return AWAIT_PHOTO_FOR_ANIMATE
@@ -1238,7 +1239,9 @@ async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
+# ------------------- НОВАЯ ВЕРСИЯ ОЖИВЛЕНИЯ ФОТО (Wan 2.6, платно, без выбора режима) -------------------
 async def handle_animate_photo_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Приём фото
     if update.message.text:
         text = update.message.text.strip()
         if text == "🔙 Главное меню":
@@ -1246,7 +1249,7 @@ async def handle_animate_photo_photo(update: Update, context: ContextTypes.DEFAU
             await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
             return MAIN_MENU
         else:
-            await update.message.reply_text("Пожалуйста, отправьте фото.", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text("Пожалуйста, отправьте фото (JPEG/PNG).", reply_markup=get_cancel_keyboard())
             return AWAIT_PHOTO_FOR_ANIMATE
 
     if not update.message.photo:
@@ -1257,85 +1260,86 @@ async def handle_animate_photo_photo(update: Update, context: ContextTypes.DEFAU
     photo_url = photo_file.file_path
     context.user_data['animate_photo_url'] = photo_url
 
-    keyboard = ReplyKeyboardMarkup(
-        [[KeyboardButton("Normal"), KeyboardButton("Fun")], [KeyboardButton("🔙 Главное меню")]],
-        resize_keyboard=True, one_time_keyboard=True
-    )
     await update.message.reply_text(
-        "Фото получено. Теперь выберите режим анимации:\n"
-        "• Normal – естественное движение\n"
-        "• Fun – более экспрессивное, весёлое\n\n"
-        "Также вы можете отправить текстовое описание движения (необязательно).\n"
-        "Напишите 'пропустить', если не хотите добавлять описание.",
-        reply_markup=keyboard
+        "✅ Фото получено.\n\n"
+        "Теперь вы можете отправить **текстовое описание** движения (например, «камера медленно приближается, листья колышутся»).\n"
+        "Если не хотите добавлять описание, напишите **пропустить**.",
+        reply_markup=get_cancel_keyboard()
     )
-    return AWAIT_MODE_FOR_ANIMATE
-
-async def handle_animate_photo_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text
-    if text == "🔙 Главное меню":
-        context.user_data.clear()
-        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
-        return MAIN_MENU
-
-    if text in ("Normal", "Fun"):
-        context.user_data['animate_mode'] = text.lower()
-        await update.message.reply_text(
-            "Теперь отправьте текстовое описание движения (например, «камера медленно приближается, листья колышутся»).\n"
-            "Если не хотите добавлять описание, напишите 'пропустить'.",
-            reply_markup=get_cancel_keyboard()
-        )
-        return AWAIT_PROMPT_FOR_ANIMATE
-    else:
-        await update.message.reply_text("Пожалуйста, выберите режим: Normal или Fun.", reply_markup=get_cancel_keyboard())
-        return AWAIT_MODE_FOR_ANIMATE
+    return AWAIT_PROMPT_FOR_ANIMATE
 
 async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
     if text == "🔙 Главное меню":
         context.user_data.clear()
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
     photo_url = context.user_data.get('animate_photo_url')
-    mode = context.user_data.get('animate_mode', 'normal')
-    prompt = None if text.lower() == "пропустить" else text
+    if not photo_url:
+        await update.message.reply_text("Ошибка: фото не найдено. Начните заново.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
 
-    model = "grok-imagine-image-to-video"
+    # Определяем модель и цену
+    model = "wan-2-6-image-to-video"
+    price = 3  # промтов
+
+    # Проверка баланса
+    balance = get_user_balance(user_id)
+    if balance < price:
+        await update.message.reply_text(
+            f"❌ Недостаточно промтов для оживления фото. Нужно: {price}, у вас: {balance}.\n"
+            "Пополните баланс через кнопку «💰 Мой баланс».",
+            reply_markup=get_main_keyboard()
+        )
+        return MAIN_MENU
+
+    # Списание
+    if not deduct_balance(user_id, price):
+        await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    # Определяем промпт (если пользователь ввёл "пропустить" или пустую строку – None)
+    prompt = None
+    if text.lower() != "пропустить" and text:
+        prompt = text
+
+    # Формируем payload через build_payload
     payload = build_payload(model, prompt=prompt, image_url=photo_url)
     if not payload:
-        await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
+        await update.message.reply_text("❌ Не удалось сформировать запрос для Wan 2.6.", reply_markup=get_main_keyboard())
+        add_balance(user_id, price)  # возвращаем списанное
         return MAIN_MENU
-    payload['mode'] = mode      # Применяем выбранный пользователем режим
 
+    # Отправляем действие "Загрузка видео"
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
+
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
     except Exception as e:
-        logger.exception("Ошибка оживления фото")
+        logger.exception("Ошибка оживления фото (Wan 2.6)")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+        add_balance(user_id, price)  # возврат при ошибке
         return MAIN_MENU
     finally:
         stop_action.set()
         await action_task
 
     if result_bytes:
-        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео")
+        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео (Wan 2.6)")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        save_message(user_id, "user", f"animate photo: mode={mode}, prompt={prompt}")
+        save_message(user_id, "user", f"animate photo (Wan 2.6): {prompt if prompt else 'без описания'}")
         save_message(user_id, "assistant", "Видео создано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
+        add_balance(user_id, price)  # возврат
 
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ... (остальные обработчики без изменений: handle_single_image, face swap, edit, avatar, animate и т.д.)
-# Полный код предыдущих версий, в котором они уже есть, оставлен без сокращений.
-# Ниже представлен фрагмент с этими обработчиками для полноты, но в реальном файле они должны идти подряд.
-
+# ========== Обработчики для однократных изображений (удаление фона, улучшение) ==========
 async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1415,7 +1419,7 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- Обработчики для face swap, edit, avatar, animate -------------------
+# ------------------- Обработчики для face swap, edit, avatar, animate (остались без изменений) -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1519,8 +1523,6 @@ async def handle_face_swap_source(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-
-# Обработчик редактирования изображения (img2img) – получает фото и переходит к запросу промпта
 async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1547,7 +1549,6 @@ async def handle_edit_image(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_PROMPT_FOR_EDIT
-
 
 async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prompt_text = update.message.text
@@ -1617,7 +1618,6 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-
 async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1641,7 +1641,6 @@ async def handle_avatar_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_AUDIO_FOR_AVATAR
-
 
 async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1710,7 +1709,6 @@ async def handle_avatar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-
 async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1734,7 +1732,6 @@ async def handle_animate_video(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=get_cancel_keyboard()
     )
     return AWAIT_IMAGE_FOR_ANIMATE
-
 
 async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
@@ -1799,7 +1796,6 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
-
 
 # ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2034,7 +2030,7 @@ async def main_async():
                 MessageHandler(filters.PHOTO, handle_animate_photo_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
             ],
-            AWAIT_MODE_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_mode)],
+            # Состояние AWAIT_MODE_FOR_ANIMATE УДАЛЕНО – больше не используется
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
