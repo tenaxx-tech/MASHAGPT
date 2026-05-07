@@ -399,7 +399,7 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
     payload = {
         "imageUrl": image_url,
         "mode": "normal",
-        "aspectRatio": "16:9"          # <-- обязательный параметр
+        "aspectRatio": "16:9"
     }
     if prompt:
         payload["prompt"] = prompt
