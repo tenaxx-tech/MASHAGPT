@@ -397,14 +397,11 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         if not prompt or not image_url:
             return None
         return {"prompt": prompt, "image": image_url}
+    # ВАЖНО: именно так ожидает API (imageUrl, mode, prompt опционально)
     if model == "grok-imagine-image-to-video":
-        payload = {
-            "image_url": image_url,
-            "prompt": prompt or "",
-            "aspect_ratio": "16:9",
-            "duration": 5,
-            "resolution": "720p"
-        }
+        payload = {"imageUrl": image_url, "mode": "normal"}
+        if prompt:
+            payload["prompt"] = prompt
         return payload
     payloads = {
         "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
@@ -1303,17 +1300,14 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
 
     photo_url = context.user_data.get('animate_photo_url')
     mode = context.user_data.get('animate_mode', 'normal')
-
-    if text.lower() == "пропустить":
-        prompt = f"{mode} mode"
-    else:
-        prompt = f"{mode} mode: {text}"
+    prompt = None if text.lower() == "пропустить" else text
 
     model = "grok-imagine-image-to-video"
     payload = build_payload(model, prompt=prompt, image_url=photo_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
         return MAIN_MENU
+    payload['mode'] = mode      # Применяем выбранный пользователем режим
 
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
@@ -1337,6 +1331,10 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
 
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
+
+# ... (остальные обработчики без изменений: handle_single_image, face swap, edit, avatar, animate и т.д.)
+# Полный код предыдущих версий, в котором они уже есть, оставлен без сокращений.
+# Ниже представлен фрагмент с этими обработчиками для полноты, но в реальном файле они должны идти подряд.
 
 async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
