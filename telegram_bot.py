@@ -1303,21 +1303,12 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     mode = context.user_data.get('animate_mode', 'normal')
     prompt = None if text.lower() == "пропустить" else text
 
-    # Используем Kling 1.6 Image-to-Video (сохраняет лица, без звука)
-    model = "kling-2-6-image-to-video"
-    
-    # Стандартный промпт, если пользователь ничего не ввёл
-    if not prompt:
-        prompt = "ПЛАВНОЕ ДВИЖЕНИЕ: ЛЁГКИЙ ПОВОРОТ ГОЛОВЫ, ЕСТЕСТВЕННОЕ МОРГАНИЕ, ЛЁГКАЯ УЛЫБКА"
-    
+    model = "grok-imagine-image-to-video"
     payload = build_payload(model, prompt=prompt, image_url=photo_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для анимации.", reply_markup=get_main_keyboard())
         return MAIN_MENU
-    
-    # Режим 'normal' или 'fun' — для Kling добавляем в описание
-    if mode == "fun":
-        prompt = f"[ВЕСЁЛАЯ АТМОСФЕРА] {prompt}"
+    payload['mode'] = mode
 
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
@@ -1332,10 +1323,10 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await action_task
 
     if result_bytes:
-        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео (Kling 1.6, сохранение лиц)")
+        await update.message.reply_video(video=io.BytesIO(result_bytes), caption="🖼️ Оживлённое видео")
         await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
         save_message(user_id, "user", f"animate photo: mode={mode}, prompt={prompt}")
-        save_message(user_id, "assistant", "Видео создано с сохранением лица")
+        save_message(user_id, "assistant", "Видео создано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
 
