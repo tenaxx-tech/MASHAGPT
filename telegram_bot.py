@@ -396,10 +396,10 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
             return None
         return {"prompt": prompt, "image": image_url}
     if model == "grok-imagine-image-to-video":
-    payload = {
+        payload = {
         "imageUrl": image_url,
         "mode": "normal",
-        "aspectRatio": "16:9"
+        "aspectRatio": "16:9"          # <-- обязательный параметр
     }
     if prompt:
         payload["prompt"] = prompt
