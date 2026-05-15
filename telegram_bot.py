@@ -1810,7 +1810,7 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ========== УПАКОВКА ГРУППЫ ВК (исправленная версия) ==========
+# ========== УПАКОВКА ГРУППЫ ВК (современный стиль) ==========
 async def vk_package_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "🔙 Главное меню":
@@ -1877,54 +1877,93 @@ async def vk_package_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     services = context.user_data.get('vk_services', 'услуги')
     colors = context.user_data.get('vk_colors', 'цвета')
 
+    # Разбиваем услуги/товары на списки
+    items_list = [s.strip() for s in services.split(',') if s.strip()]
+    # Условное разделение: первые 5 – товары, остальные – услуги
+    products = items_list[:5] if len(items_list) > 5 else items_list[:3]
+    services_list = items_list[5:] if len(items_list) > 5 else items_list[3:]
+    products_text = ", ".join([p.upper() for p in products]) if products else "ТОВАРЫ"
+    services_text = ", ".join([s.upper() for s in services_list]) if services_list else "УСЛУГИ"
+
+    # Формируем промпт в зависимости от выбранного элемента
     if text == "🖥 Обложка ПК (1920×768)":
         width, height = 1920, 768
-        element_type = "обложка для ПК"
-        style_detail = "горизонтальный баннер для шапки группы ВК. Стиль: как обложка YouTube-канала. Крупные, яркие, хорошо читаемые буквы. Прорисованный, детализированный, креативный фон. Без коллажей, без сетки, без миниатюр. Только одна цельная обложка."
+        aspect = "2.5:1"
+        element_type = "широкоформатную обложку для ВКонтакте"
+        style_detail = "горизонтальный баннер для шапки группы ВК. Стиль: современный YouTube-канал, огромные жирные буквы, прорисованный фон."
     elif text == "📱 Мобильная обложка (1080×1920)":
         width, height = 1080, 1920
-        element_type = "мобильная обложка"
-        style_detail = "вертикальный баннер для мобильной версии ВК. Стиль: как обложка YouTube-канала. Крупные, яркие буквы. Прорисованный фон. Без коллажей, без сетки. Одна цельная обложка."
+        aspect = "9:16"
+        element_type = "вертикальную обложку для ВКонтакте (мобильная версия)"
+        style_detail = "вертикальный баннер для мобильной шапки. Стиль: яркий, крупный текст, современный дизайн."
     elif text == "🔘 Кнопки меню (376×256)":
         width, height = 376, 256
-        element_type = "кнопка меню"
-        style_detail = "кнопка для меню сообщества, минималистичный дизайн, ровно один объект, без коллажей. Чёткая форма."
+        element_type = "кнопку меню"
+        style_detail = "кнопка для меню сообщества, минималистичный дизайн, один объект, без коллажей."
+        # Для кнопок меню используем упрощённый промпт
+        prompt = f"Создай кнопку меню для группы ВКонтакте. Название: {group_name}. Тема: {theme}. Цвета: {colors}. Размер {width}×{height}. Одна кнопка, без коллажей, текст на русском крупно. Стиль: минимализм, плоский дизайн."
+        return await generate_vk_image(update, context, prompt, width, height, element_type)
     elif text == "📊 Виджеты (480×720) ×3":
         return await generate_multiple_widgets(update, context, group_name, theme, services, colors)
     elif text == "👤 Аватарка (1080×1080)":
         width, height = 1080, 1080
-        element_type = "аватарка"
-        style_detail = "квадратная аватарка сообщества, яркая, запоминающаяся, без коллажей, одно изображение."
+        element_type = "аватарку"
+        style_detail = "квадратная аватарка сообщества, яркая, запоминающаяся, без коллажей."
     elif text == "🛍 Товары (карточки)":
         width, height = 800, 800
         element_type = "карточки товаров"
-        style_detail = "коллаж из карточек товаров (одно изображение, содержащее несколько карточек), каждая карточка содержит название и цену (условно)."
+        style_detail = "коллаж из карточек товаров (одно изображение, содержащее несколько карточек), каждая карточка содержит название и цену."
     elif text == "📁 Обложка подборки":
         width, height = 1200, 800
-        element_type = "обложка для подборки товаров"
-        style_detail = "обложка для каталога товаров ВК, привлекательная, одна цельная обложка, без коллажей, крупные буквы."
+        element_type = "обложку для подборки товаров"
+        style_detail = "обложка для каталога товаров ВК, привлекательная, одна цельная обложка, крупные русские буквы."
     else:
         await update.message.reply_text("Пожалуйста, выберите пункт из меню.", reply_markup=get_vk_package_keyboard())
         return VK_PACKAGE_MENU
 
-    prompt = (
-        f"Создай {element_type} для группы ВКонтакте.\n"
-        f"ВАЖНО: сгенерируй ровно ОДНО цельное изображение. НЕ КОЛЛАЖ, НЕ НАБОР ИЗ НЕСКОЛЬКИХ ВАРИАНТОВ. НЕЛЬЗЯ делить картинку на части.\n"
-        f"Название группы: {group_name}\n"
-        f"Тематика: {theme}\n"
-        f"Услуги/товары: {services}\n"
-        f"Цветовая гамма: {colors}\n"
-        f"Размер: {width}×{height} пикселей.\n"
-        f"Стиль: {style_detail}\n"
-        f"Текст должен быть очень крупным, ярким, хорошо читаемым. Используй указанные цвета. Фон – прорисованный, креативный, с деталями."
-    )
+    # Детальный промпт для обложек (аналогично примеру пользователя)
+    background_desc = f"Реалистичный фон на тему: {theme}. Прорисованный, детализированный, высокое качество, без людей, без текста."
+    if theme.lower() in ['инженерные системы', 'отопление', 'водоснабжение', 'строительство', 'дом']:
+        background_desc = (
+            "Реалистичный разрез (сечение) современного двухэтажного загородного дома. Показаны первый этаж, второй этаж, подземное пространство. "
+            "В доме и под ним прорисованы инженерные системы с аккуратными подписями на русском языке (крупный рубленый шрифт, белый или светло-серый на полупрозрачной подложке): "
+            "тёплый пол, отопление, водоснабжение, автономная канализация, система водоочистки. Стиль: фотореалистичная архитектурная визуализация high-end, "
+            "тёплая природная гамма, мягкое дневное освещение, чисто, аккуратно, без людей."
+        )
 
+    prompt = f"""
+Создай {element_type}, точный размер {width}×{height} пикселей (соотношение {aspect}). Разрешение высокое.
+
+**ФОН:** {background_desc}
+
+**ЛЕВЫЙ БЛОК ТЕКСТА (крупно, только заглавные буквы, рубленый шрифт, цвет из гаммы {colors}, выравнивание по левому краю, отступ сверху 20% высоты):**
+- «{group_name.upper()}» (разбить на 3 строки при необходимости)
+- Ниже, через отступ: «ПОД КЛЮЧ»
+- Затем: «НИЗКИЕ ЦЕНЫ»
+- Затем: «БЫСТРАЯ УСТАНОВКА»
+- Затем: «ДЛЯ ДОМА И БИЗНЕСА»
+
+**ПРАВЫЙ БЛОК (текст + минималистичные иконки):**
+- Заголовок «ТОВАРЫ» крупно.
+- Список (каждый пункт с маленькой стильной иконкой): {products_text}
+- Ниже заголовок «УСЛУГИ».
+- Список с иконками-галочками: {services_text}
+
+Все текстовые надписи строго на русском языке, заглавными буквами, чёткие, крупные, без искажений. Иконки минималистичные, в едином стиле. 
+Композиция сбалансированная: текст не перекрывает важные детали фона. Логотипов и водяных знаков нет. 
+Верхние 20% изображения (по высоте) – полностью пустые, без текста, только фон.
+ЗАПРЕЩЕНЫ коллажи, сетки, миниатюры. Только ОДНО цельное изображение.
+
+--ar {aspect.replace(':', ':')}
+"""
     return await generate_vk_image(update, context, prompt, width, height, element_type)
 
 async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, target_width: int, target_height: int, element_type: str):
-    """Генерирует изображение и изменяет его размер до target_width x target_height"""
+    """Генерирует изображение через MashaGPT и ресайзит до точного размера"""
+    # Можно использовать midjourney для лучшего качества, но оставим nano-banana-2 как более быструю
     model = "nano-banana-2"
     payload = {"prompt": prompt}
+    # Альтернатива: model = "midjourney", payload = {"taskType": "mj_txt2img", "prompt": prompt, "speed": "fast"}
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
         if not result_bytes:
@@ -1935,9 +1974,10 @@ async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TY
                 rgb = Image.new('RGB', img.size, (255, 255, 255))
                 rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = rgb
+            # Ресайз до точного размера
             img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             output = io.BytesIO()
-            img.save(output, format='JPEG', quality=90)
+            img.save(output, format='JPEG', quality=95)
             resized_bytes = output.getvalue()
         return resized_bytes, media_url
     except Exception as e:
@@ -1985,7 +2025,7 @@ async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                      group_name, theme, services, colors):
-    """Генерирует три виджета (480×720)"""
+    """Генерирует три виджета (480×720) по одному"""
     user_id = update.effective_user.id
     used = get_weekly_image_count(user_id)
     paid = False
@@ -2005,18 +2045,20 @@ async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAUL
             )
             return MAIN_MENU
 
-    for i in range(1, 4):
+    items_list = [s.strip() for s in services.split(',') if s.strip()]
+    widgets_data = items_list[:3] if len(items_list) >= 3 else items_list + ["Акция", "Контакты", "О нас"][:3-len(items_list)]
+    
+    for i, widget_text in enumerate(widgets_data, 1):
         prompt = (
-            f"Создай виджет {i} из трёх для группы ВКонтакте. "
-            f"Это отдельное изображение, НЕ КОЛЛАЖ. Только один виджет на картинке.\n"
+            f"Создай виджет {i} из трёх для группы ВКонтакте. Это отдельное изображение, НЕ КОЛЛАЖ. Только один виджет на картинке.\n"
             f"Название группы: {group_name}\n"
             f"Тематика: {theme}\n"
-            f"Услуги/товары: {services}\n"
+            f"Содержание виджета: {widget_text}\n"
             f"Цветовая гамма: {colors}\n"
             f"Размер: 480×720 пикселей.\n"
-            f"Виджет содержит информацию: акция, услуга, контакт или кнопка. "
-            f"Стиль минималистичный, информативный. Все три виджета должны быть в едином стиле. "
-            f"Крупный читаемый текст."
+            f"Виджет содержит информацию: {widget_text}. Стиль минималистичный, информативный. "
+            f"Крупный читаемый текст на русском языке. Все три виджета должны быть в едином стиле.\n"
+            f"ЗАПРЕЩЕНЫ коллажи и сетки."
         )
         result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, 480, 720, f"виджет {i}")
         if result_bytes:
