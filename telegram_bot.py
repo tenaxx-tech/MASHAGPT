@@ -58,7 +58,7 @@ AWAIT_MODE_FOR_ANIMATE = 21
 AWAIT_PROMPT_FOR_ANIMATE = 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
 
-# New states for VK packaging
+# VK packaging states
 VK_PACKAGE_NAME = 24
 VK_PACKAGE_THEME = 25
 VK_PACKAGE_SERVICES = 26
@@ -116,7 +116,7 @@ def get_main_keyboard():
         [KeyboardButton("🖼 Генерация изображения")],
         [KeyboardButton("🎬 Генерация видео")],
         [KeyboardButton("⭐ Популярные модели генерации")],
-        [KeyboardButton("📦 Упаковка группы ВК")],  # new button
+        [KeyboardButton("📦 Упаковка группы ВК")],
         [KeyboardButton("🎵 Аудио (озвучка, эффекты)")],
         [KeyboardButton("🤖 Аватар / анимация")],
         [KeyboardButton("🧹 Сбросить диалог")],
@@ -1036,13 +1036,6 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return POPULAR_MENU
 
 # ------------------- Обработчики для пунктов популярного меню -------------------
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-import json
-import asyncio
-import logging
-
-logger = logging.getLogger(__name__)
-
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -1824,7 +1817,7 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УПАКОВКИ ГРУППЫ ВК ==========
+# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УПАКОВКИ ГРУППЫ ВК (с исправлением ресайза) ==========
 async def vk_package_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "🔙 Главное меню":
@@ -1937,13 +1930,84 @@ async def vk_package_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     return await generate_vk_image(update, context, prompt, width, height, element_type)
 
-async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                     group_name, theme, services, colors):
-    """Генерирует три виджета (480×720) последовательно"""
+async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, target_width: int, target_height: int, element_type: str):
+    """
+    Генерирует изображение через MashaGPT (модель nano-banana-2) 
+    и изменяет его размер до target_width x target_height.
+    """
+    model = "nano-banana-2"
+    payload = {"prompt": prompt}   # Не передаём aspectRatio — получим квадрат 1:1
+    try:
+        result_bytes, media_url = await masha_media_generate(model, payload)
+        if not result_bytes:
+            return None, None
+
+        # Открываем изображение и ресайзим до точного размера
+        with Image.open(io.BytesIO(result_bytes)) as img:
+            # Конвертируем в RGB, если необходимо (удаляем альфа-канал)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                rgb = Image.new('RGB', img.size, (255, 255, 255))
+                rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = rgb
+            # Изменяем размер до точного (без сохранения пропорций)
+            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=90)
+            resized_bytes = output.getvalue()
+        return resized_bytes, media_url
+    except Exception as e:
+        logger.exception(f"Ошибка генерации {element_type}")
+        await update.message.reply_text(f"❌ Ошибка генерации: {str(e)[:200]}")
+        return None, None
+
+async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, width: int, height: int, element_type: str):
+    """Генерирует, ресайзит и отправляет одно изображение с учётом лимитов"""
     user_id = update.effective_user.id
     used = get_weekly_image_count(user_id)
     paid = False
-    # Проверка лимита / списания (как в handle_media_input)
+
+    # Проверка бесплатного лимита и списание при необходимости
+    if used >= 5:
+        balance = get_user_balance(user_id)
+        if balance >= PAID_IMAGE_PRICE:
+            if not deduct_balance(user_id, PAID_IMAGE_PRICE):
+                await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
+                return MAIN_MENU
+            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов.", reply_markup=get_cancel_keyboard())
+            paid = True
+        else:
+            await update.message.reply_text(
+                f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}, у вас: {balance}.",
+                reply_markup=get_main_keyboard()
+            )
+            return MAIN_MENU
+
+    # Генерация и ресайз
+    result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, width, height, element_type)
+    if result_bytes:
+        # Дополнительное сжатие (уменьшение веса) для отправки в Telegram
+        compressed = await compress_image(result_bytes, max_size=1920, quality=85)
+        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {element_type} (сжатое)")
+        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
+        if not paid and used < 5:
+            increment_weekly_image_count(user_id)
+        save_message(user_id, "user", f"VK package: {element_type}")
+        save_message(user_id, "assistant", "Изображение сгенерировано")
+    else:
+        await update.message.reply_text(f"❌ Не удалось получить результат для {element_type}.")
+        if paid:
+            add_balance(user_id, PAID_IMAGE_PRICE)
+
+    await update.message.reply_text("Что дальше?", reply_markup=get_vk_package_keyboard())
+    return VK_PACKAGE_MENU
+
+async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                     group_name, theme, services, colors):
+    """Генерирует три виджета (480×720) с изменением размера"""
+    user_id = update.effective_user.id
+    used = get_weekly_image_count(user_id)
+    paid = False
+
     if used >= 5:
         balance = get_user_balance(user_id)
         if balance >= PAID_IMAGE_PRICE:
@@ -1953,7 +2017,10 @@ async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов за первый виджет.", reply_markup=get_cancel_keyboard())
             paid = True
         else:
-            await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}.", reply_markup=get_main_keyboard())
+            await update.message.reply_text(
+                f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}.",
+                reply_markup=get_main_keyboard()
+            )
             return MAIN_MENU
 
     for i in range(1, 4):
@@ -1969,67 +2036,16 @@ async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAUL
         )
         result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, 480, 720, f"виджет {i}")
         if result_bytes:
-            compressed = await compress_image(result_bytes)
+            compressed = await compress_image(result_bytes, max_size=1920, quality=85)
             await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"📊 Виджет {i}")
             await update.message.reply_text(f"📥 Скачать оригинал виджета {i}: {media_url}")
             if not paid and i == 1 and used < 5:
-                increment_weekly_image_count(user_id)   # увеличиваем счётчик только один раз за три виджета
+                increment_weekly_image_count(user_id)
         else:
             await update.message.reply_text(f"❌ Не удалось сгенерировать виджет {i}.")
 
     await update.message.reply_text("Все три виджета сгенерированы! Что дальше?", reply_markup=get_vk_package_keyboard())
     return VK_PACKAGE_MENU
-
-async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, width: int, height: int, element_type: str):
-    """Обёртка для генерации одного изображения с проверкой лимита и отправкой"""
-    user_id = update.effective_user.id
-    used = get_weekly_image_count(user_id)
-    paid = False
-    if used >= 5:
-        balance = get_user_balance(user_id)
-        if balance >= PAID_IMAGE_PRICE:
-            if not deduct_balance(user_id, PAID_IMAGE_PRICE):
-                await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
-                return MAIN_MENU
-            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов.", reply_markup=get_cancel_keyboard())
-            paid = True
-        else:
-            await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}.", reply_markup=get_main_keyboard())
-            return MAIN_MENU
-
-    result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, width, height, element_type)
-    if result_bytes:
-        compressed = await compress_image(result_bytes)
-        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {element_type} (сжатое)")
-        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
-        if not paid and used < 5:
-            increment_weekly_image_count(user_id)
-        save_message(user_id, "user", f"VK package: {element_type}")
-        save_message(user_id, "assistant", "Изображение сгенерировано")
-    else:
-        await update.message.reply_text(f"❌ Не удалось получить результат для {element_type}.")
-        if paid:
-            add_balance(user_id, PAID_IMAGE_PRICE)
-
-    await update.message.reply_text("Что дальше?", reply_markup=get_vk_package_keyboard())
-    return VK_PACKAGE_MENU
-
-async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, width: int, height: int, element_type: str):
-    """Низкоуровневая генерация через MashaGPT"""
-    model = "nano-banana-2"  # можно заменить на flux-2 или midjourney
-    # Добавляем размер в параметры payload
-    payload = {
-        "prompt": prompt,
-        "aspectRatio": f"{width}:{height}",
-        "resolution": "1K"
-    }
-    try:
-        result_bytes, media_url = await masha_media_generate(model, payload)
-        return result_bytes, media_url
-    except Exception as e:
-        logger.exception(f"Ошибка генерации {element_type}")
-        await update.message.reply_text(f"❌ Ошибка генерации: {str(e)[:200]}")
-        return None, None
 
 # ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2265,7 +2281,7 @@ async def main_async():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
             ],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
-            # New VK packaging states
+            # VK packaging states
             VK_PACKAGE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_name)],
             VK_PACKAGE_THEME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_theme)],
             VK_PACKAGE_SERVICES: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_services)],
