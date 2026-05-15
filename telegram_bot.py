@@ -1959,23 +1959,38 @@ async def vk_package_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return await generate_vk_image(update, context, prompt, width, height, element_type)
 
 async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, target_width: int, target_height: int, element_type: str):
-    """Генерирует изображение через MashaGPT и ресайзит до точного размера"""
-    # Можно использовать midjourney для лучшего качества, но оставим nano-banana-2 как более быструю
-    model = "nano-banana-2"
-    payload = {"prompt": prompt}
-    # Альтернатива: model = "midjourney", payload = {"taskType": "mj_txt2img", "prompt": prompt, "speed": "fast"}
+    """
+    Генерирует изображение через MashaGPT с правильными пропорциями.
+    Для нестандартных соотношений использует Midjourney (или Flux-2).
+    """
+    # Для обложек (не квадратных) используем Midjourney
+    if target_width != target_height:
+        model = "midjourney"
+        payload = {
+            "taskType": "mj_txt2img",
+            "prompt": prompt,
+            "aspectRatio": f"{target_width}:{target_height}",
+            "speed": "fast"
+        }
+    else:
+        # Для квадратных элементов можно использовать более быструю модель
+        model = "nano-banana-2"
+        payload = {"prompt": prompt}
+    
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
         if not result_bytes:
             return None, None
 
         with Image.open(io.BytesIO(result_bytes)) as img:
+            # Конвертация в RGB
             if img.mode in ('RGBA', 'LA', 'P'):
                 rgb = Image.new('RGB', img.size, (255, 255, 255))
                 rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = rgb
-            # Ресайз до точного размера
-            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            # Если размер не совпадает с ожидаемым (бывает из-за округления), ресайзим
+            if img.size != (target_width, target_height):
+                img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             output = io.BytesIO()
             img.save(output, format='JPEG', quality=95)
             resized_bytes = output.getvalue()
