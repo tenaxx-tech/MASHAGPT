@@ -258,7 +258,7 @@ def get_vk_package_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 # ------------------- Вспомогательные функции -------------------
-async def compress_image(image_bytes: bytes, max_size: int = 1280, quality: int = 85) -> bytes:
+async def compress_image(image_bytes: bytes, max_size: int = 1920, quality: int = 85) -> bytes:
     with Image.open(io.BytesIO(image_bytes)) as img:
         if img.mode in ('RGBA', 'LA', 'P'):
             rgb = Image.new('RGB', img.size, (255, 255, 255))
@@ -424,19 +424,19 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
             payload["prompt"] = prompt
         return payload
     payloads = {
-        "nano-banana-2": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
-        "nano-banana-pro": {"prompt": prompt, "aspectRatio": "1:1", "resolution": "1K"},
-        "z-image": {"prompt": prompt, "aspectRatio": "1:1"},
-        "grok-imagine-text-to-image": {"prompt": prompt, "aspectRatio": "1:1"},
-        "flux-2": {"prompt": prompt, "model": "pro", "aspectRatio": "1:1", "resolution": "1K"},
-        "midjourney": {"taskType": "mj_txt2img", "prompt": prompt, "aspectRatio": "1:1", "speed": "fast"},
-        "gpt-image-1-5-text-to-image": {"prompt": prompt, "aspectRatio": "1:1", "quality": "medium"},
+        "nano-banana-2": {"prompt": prompt},
+        "nano-banana-pro": {"prompt": prompt},
+        "z-image": {"prompt": prompt},
+        "grok-imagine-text-to-image": {"prompt": prompt},
+        "flux-2": {"prompt": prompt, "model": "pro"},
+        "midjourney": {"taskType": "mj_txt2img", "prompt": prompt, "speed": "fast"},
+        "gpt-image-1-5-text-to-image": {"prompt": prompt, "quality": "medium"},
         "recraft-remove-background": {"imageUrl": image_url} if image_url else None,
         "gpt-image-1-5-image-to-image": {"prompt": prompt, "inputUrls": [image_url]} if image_url else None,
         "ideogram-v3-reframe": {"imageUrl": image_url, "imageSize": "square", "renderingSpeed": "BALANCED"} if image_url else None,
         "recraft-crisp-upscale": {"imageUrl": image_url} if image_url else None,
         "topaz-image-upscale": {"imageUrl": image_url, "upscaleFactor": "2"} if image_url else None,
-        "grok-imagine-text-to-video": {"prompt": prompt, "aspectRatio": "3:2", "mode": "normal"},
+        "grok-imagine-text-to-video": {"prompt": prompt, "mode": "normal"},
         "wan-2-6-text-to-video": {"prompt": prompt, "duration": "5", "resolution": "1080p"},
         "wan-2-5-text-to-video": {"prompt": prompt, "duration": "5", "aspectRatio": "16:9", "resolution": "1080p"},
         "wan-2-6-image-to-video": {"prompt": prompt, "imageUrls": [image_url]} if image_url else None,
@@ -1259,9 +1259,8 @@ async def handle_text_to_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- НОВАЯ ВЕРСИЯ ОЖИВЛЕНИЯ ФОТО (Wan 2.6, платно, без выбора режима) -------------------
+# ------------------- Оживление фото (Wan 2.6) -------------------
 async def handle_animate_photo_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Приём фото
     if update.message.text:
         text = update.message.text.strip()
         if text == "🔙 Главное меню":
@@ -1301,11 +1300,9 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("Ошибка: фото не найдено. Начните заново.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Определяем модель и цену
     model = "wan-2-6-image-to-video"
-    price = 3  # промтов
+    price = 3
 
-    # Проверка баланса
     balance = get_user_balance(user_id)
     if balance < price:
         await update.message.reply_text(
@@ -1315,24 +1312,20 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         )
         return MAIN_MENU
 
-    # Списание
     if not deduct_balance(user_id, price):
         await update.message.reply_text("❌ Ошибка списания промтов.", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Определяем промпт (если пользователь ввёл "пропустить" или пустую строку – None)
     prompt = None
     if text.lower() != "пропустить" and text:
         prompt = text
 
-    # Формируем payload через build_payload
     payload = build_payload(model, prompt=prompt, image_url=photo_url)
     if not payload:
         await update.message.reply_text("❌ Не удалось сформировать запрос для Wan 2.6.", reply_markup=get_main_keyboard())
-        add_balance(user_id, price)  # возвращаем списанное
+        add_balance(user_id, price)
         return MAIN_MENU
 
-    # Отправляем действие "Загрузка видео"
     stop_action = asyncio.Event()
     action_task = asyncio.create_task(send_action_loop(update, ChatAction.UPLOAD_VIDEO, stop_action))
 
@@ -1341,7 +1334,7 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
     except Exception as e:
         logger.exception("Ошибка оживления фото (Wan 2.6)")
         await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
-        add_balance(user_id, price)  # возврат при ошибке
+        add_balance(user_id, price)
         return MAIN_MENU
     finally:
         stop_action.set()
@@ -1354,12 +1347,12 @@ async def handle_animate_photo_prompt(update: Update, context: ContextTypes.DEFA
         save_message(user_id, "assistant", "Видео создано")
     else:
         await update.message.reply_text("❌ Не удалось получить результат.")
-        add_balance(user_id, price)  # возврат
+        add_balance(user_id, price)
 
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ========== Обработчики для однократных изображений (удаление фона, улучшение) ==========
+# ========== Обработчики для однократных изображений ==========
 async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1439,7 +1432,7 @@ async def handle_single_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
     return POPULAR_MENU
 
-# ------------------- Обработчики для face swap, edit, avatar, animate (остались без изменений) -------------------
+# ------------------- Face swap, edit, avatar, animate -------------------
 async def handle_face_swap_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text:
         text = update.message.text.strip()
@@ -1817,7 +1810,7 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
-# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УПАКОВКИ ГРУППЫ ВК (с исправлением ресайза) ==========
+# ========== УПАКОВКА ГРУППЫ ВК (исправленная версия) ==========
 async def vk_package_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     if text == "🔙 Главное меню":
@@ -1879,77 +1872,69 @@ async def vk_package_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
 
-    # Получаем сохранённые параметры
     group_name = context.user_data.get('vk_group_name', 'Название группы')
     theme = context.user_data.get('vk_theme', 'тематика')
     services = context.user_data.get('vk_services', 'услуги')
     colors = context.user_data.get('vk_colors', 'цвета')
 
-    # Определяем тип и размеры
     if text == "🖥 Обложка ПК (1920×768)":
         width, height = 1920, 768
         element_type = "обложка для ПК"
-        prompt_suffix = "горизонтальный баннер, широкоформатный, для шапки группы ВК"
+        style_detail = "горизонтальный баннер для шапки группы ВК. Стиль: как обложка YouTube-канала. Крупные, яркие, хорошо читаемые буквы. Прорисованный, детализированный, креативный фон. Без коллажей, без сетки, без миниатюр. Только одна цельная обложка."
     elif text == "📱 Мобильная обложка (1080×1920)":
         width, height = 1080, 1920
         element_type = "мобильная обложка"
-        prompt_suffix = "вертикальный баннер, для мобильной версии ВК"
+        style_detail = "вертикальный баннер для мобильной версии ВК. Стиль: как обложка YouTube-канала. Крупные, яркие буквы. Прорисованный фон. Без коллажей, без сетки. Одна цельная обложка."
     elif text == "🔘 Кнопки меню (376×256)":
         width, height = 376, 256
         element_type = "кнопка меню"
-        prompt_suffix = "иконка или кнопка для меню сообщества, минималистичный дизайн"
+        style_detail = "кнопка для меню сообщества, минималистичный дизайн, ровно один объект, без коллажей. Чёткая форма."
     elif text == "📊 Виджеты (480×720) ×3":
         return await generate_multiple_widgets(update, context, group_name, theme, services, colors)
     elif text == "👤 Аватарка (1080×1080)":
         width, height = 1080, 1080
         element_type = "аватарка"
-        prompt_suffix = "квадратная аватарка сообщества, яркая, запоминающаяся"
+        style_detail = "квадратная аватарка сообщества, яркая, запоминающаяся, без коллажей, одно изображение."
     elif text == "🛍 Товары (карточки)":
         width, height = 800, 800
         element_type = "карточки товаров"
-        prompt_suffix = "коллаж из карточек товаров, каждая карточка содержит название и цену (условно)"
+        style_detail = "коллаж из карточек товаров (одно изображение, содержащее несколько карточек), каждая карточка содержит название и цену (условно)."
     elif text == "📁 Обложка подборки":
         width, height = 1200, 800
         element_type = "обложка для подборки товаров"
-        prompt_suffix = "обложка для каталога или подборки товаров ВК, привлекательная"
+        style_detail = "обложка для каталога товаров ВК, привлекательная, одна цельная обложка, без коллажей, крупные буквы."
     else:
         await update.message.reply_text("Пожалуйста, выберите пункт из меню.", reply_markup=get_vk_package_keyboard())
         return VK_PACKAGE_MENU
 
-    # Для всех, кроме виджетов, генерируем одно изображение
     prompt = (
         f"Создай {element_type} для группы ВКонтакте.\n"
+        f"ВАЖНО: сгенерируй ровно ОДНО цельное изображение. НЕ КОЛЛАЖ, НЕ НАБОР ИЗ НЕСКОЛЬКИХ ВАРИАНТОВ. НЕЛЬЗЯ делить картинку на части.\n"
         f"Название группы: {group_name}\n"
         f"Тематика: {theme}\n"
         f"Услуги/товары: {services}\n"
         f"Цветовая гамма: {colors}\n"
-        f"Размер изображения: {width}×{height} пикселей.\n"
-        f"Стиль: {prompt_suffix}. Современный, чистый, профессиональный дизайн. "
-        f"Текст должен быть хорошо читаемым. Используй указанные цвета."
+        f"Размер: {width}×{height} пикселей.\n"
+        f"Стиль: {style_detail}\n"
+        f"Текст должен быть очень крупным, ярким, хорошо читаемым. Используй указанные цвета. Фон – прорисованный, креативный, с деталями."
     )
 
     return await generate_vk_image(update, context, prompt, width, height, element_type)
 
 async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, target_width: int, target_height: int, element_type: str):
-    """
-    Генерирует изображение через MashaGPT (модель nano-banana-2) 
-    и изменяет его размер до target_width x target_height.
-    """
+    """Генерирует изображение и изменяет его размер до target_width x target_height"""
     model = "nano-banana-2"
-    payload = {"prompt": prompt}   # Не передаём aspectRatio — получим квадрат 1:1
+    payload = {"prompt": prompt}
     try:
         result_bytes, media_url = await masha_media_generate(model, payload)
         if not result_bytes:
             return None, None
 
-        # Открываем изображение и ресайзим до точного размера
         with Image.open(io.BytesIO(result_bytes)) as img:
-            # Конвертируем в RGB, если необходимо (удаляем альфа-канал)
             if img.mode in ('RGBA', 'LA', 'P'):
                 rgb = Image.new('RGB', img.size, (255, 255, 255))
                 rgb.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = rgb
-            # Изменяем размер до точного (без сохранения пропорций)
             img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             output = io.BytesIO()
             img.save(output, format='JPEG', quality=90)
@@ -1966,7 +1951,6 @@ async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     used = get_weekly_image_count(user_id)
     paid = False
 
-    # Проверка бесплатного лимита и списание при необходимости
     if used >= 5:
         balance = get_user_balance(user_id)
         if balance >= PAID_IMAGE_PRICE:
@@ -1982,13 +1966,11 @@ async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             )
             return MAIN_MENU
 
-    # Генерация и ресайз
     result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, width, height, element_type)
     if result_bytes:
-        # Дополнительное сжатие (уменьшение веса) для отправки в Telegram
         compressed = await compress_image(result_bytes, max_size=1920, quality=85)
-        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {element_type} (сжатое)")
-        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
+        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {element_type}")
+        await update.message.reply_text(f"📥 Оригинал: {media_url}")
         if not paid and used < 5:
             increment_weekly_image_count(user_id)
         save_message(user_id, "user", f"VK package: {element_type}")
@@ -2003,7 +1985,7 @@ async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                      group_name, theme, services, colors):
-    """Генерирует три виджета (480×720) с изменением размера"""
+    """Генерирует три виджета (480×720)"""
     user_id = update.effective_user.id
     used = get_weekly_image_count(user_id)
     paid = False
@@ -2014,7 +1996,7 @@ async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAUL
             if not deduct_balance(user_id, PAID_IMAGE_PRICE):
                 await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
                 return MAIN_MENU
-            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов за первый виджет.", reply_markup=get_cancel_keyboard())
+            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов.", reply_markup=get_cancel_keyboard())
             paid = True
         else:
             await update.message.reply_text(
@@ -2025,29 +2007,31 @@ async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAUL
 
     for i in range(1, 4):
         prompt = (
-            f"Создай виджет {i} из трёх для группы ВКонтакте.\n"
+            f"Создай виджет {i} из трёх для группы ВКонтакте. "
+            f"Это отдельное изображение, НЕ КОЛЛАЖ. Только один виджет на картинке.\n"
             f"Название группы: {group_name}\n"
             f"Тематика: {theme}\n"
             f"Услуги/товары: {services}\n"
             f"Цветовая гамма: {colors}\n"
             f"Размер: 480×720 пикселей.\n"
-            f"Виджет может содержать информацию: акция, услуга, контакт или кнопка. "
-            f"Стиль минималистичный, информативный. Все три виджета должны быть в едином стиле."
+            f"Виджет содержит информацию: акция, услуга, контакт или кнопка. "
+            f"Стиль минималистичный, информативный. Все три виджета должны быть в едином стиле. "
+            f"Крупный читаемый текст."
         )
         result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, 480, 720, f"виджет {i}")
         if result_bytes:
             compressed = await compress_image(result_bytes, max_size=1920, quality=85)
             await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"📊 Виджет {i}")
-            await update.message.reply_text(f"📥 Скачать оригинал виджета {i}: {media_url}")
+            await update.message.reply_text(f"📥 Оригинал виджета {i}: {media_url}")
             if not paid and i == 1 and used < 5:
                 increment_weekly_image_count(user_id)
         else:
             await update.message.reply_text(f"❌ Не удалось сгенерировать виджет {i}.")
 
-    await update.message.reply_text("Все три виджета сгенерированы! Что дальше?", reply_markup=get_vk_package_keyboard())
+    await update.message.reply_text("Все три виджета сгенерированы!", reply_markup=get_vk_package_keyboard())
     return VK_PACKAGE_MENU
 
-# ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
+# ========== ROBOKASSA ОБРАБОТЧИКИ ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -2213,7 +2197,12 @@ async def run_web_server_with_robokassa(port, bot_instance):
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     logger.info(f"Web server (health + robokassa) запущен на порту {port}")
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        logger.info("Остановка веб-сервера...")
+        await runner.cleanup()
+        raise
 
 # ------------------- Запуск -------------------
 async def main_async():
@@ -2281,7 +2270,6 @@ async def main_async():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
             ],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
-            # VK packaging states
             VK_PACKAGE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_name)],
             VK_PACKAGE_THEME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_theme)],
             VK_PACKAGE_SERVICES: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_services)],
@@ -2299,13 +2287,27 @@ async def main_async():
     app.add_handler(CallbackQueryHandler(copy_prompt_callback, pattern="^copy_(classic|hightech)$"))
 
     port = int(os.getenv("PORT", 8080))
-    asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
+    web_task = asyncio.create_task(run_web_server_with_robokassa(port, app.bot))
 
     logger.info("Запуск бота в режиме polling")
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    await asyncio.Event().wait()
+    
+    try:
+        await asyncio.Event().wait()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("Получен сигнал остановки")
+    finally:
+        logger.info("Остановка веб-сервера...")
+        web_task.cancel()
+        try:
+            await web_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Остановка бота...")
+        await app.stop()
+        await app.updater.stop()
 
 def main():
     try:
