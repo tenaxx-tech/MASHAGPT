@@ -43,7 +43,7 @@ ADMIN_IDS = [466829859]   # Ваш Telegram user_id
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET = 9
 AWAIT_FACE_SWAP_SOURCE = 10
-AWAIT_IMAGE_FOR_EDIT = 11          # для img2img
+AWAIT_IMAGE_FOR_EDIT = 11
 AWAIT_PROMPT_FOR_EDIT = 12
 AWAIT_IMAGE_FOR_AVATAR = 13
 AWAIT_AUDIO_FOR_AVATAR = 14
@@ -57,6 +57,13 @@ AWAIT_PHOTO_FOR_ANIMATE = 20
 AWAIT_MODE_FOR_ANIMATE = 21
 AWAIT_PROMPT_FOR_ANIMATE = 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
+
+# New states for VK packaging
+VK_PACKAGE_NAME = 24
+VK_PACKAGE_THEME = 25
+VK_PACKAGE_SERVICES = 26
+VK_PACKAGE_COLORS = 27
+VK_PACKAGE_MENU = 28
 
 # ------------------- Цены моделей -------------------
 MODEL_PRICES = {
@@ -109,6 +116,7 @@ def get_main_keyboard():
         [KeyboardButton("🖼 Генерация изображения")],
         [KeyboardButton("🎬 Генерация видео")],
         [KeyboardButton("⭐ Популярные модели генерации")],
+        [KeyboardButton("📦 Упаковка группы ВК")],  # new button
         [KeyboardButton("🎵 Аудио (озвучка, эффекты)")],
         [KeyboardButton("🤖 Аватар / анимация")],
         [KeyboardButton("🧹 Сбросить диалог")],
@@ -235,6 +243,19 @@ def get_cancel_keyboard():
         [[KeyboardButton("🔙 Главное меню")]],
         resize_keyboard=True, one_time_keyboard=True
     )
+
+def get_vk_package_keyboard():
+    keyboard = [
+        [KeyboardButton("🖥 Обложка ПК (1920×768)")],
+        [KeyboardButton("📱 Мобильная обложка (1080×1920)")],
+        [KeyboardButton("🔘 Кнопки меню (376×256)")],
+        [KeyboardButton("📊 Виджеты (480×720) ×3")],
+        [KeyboardButton("👤 Аватарка (1080×1080)")],
+        [KeyboardButton("🛍 Товары (карточки)")],
+        [KeyboardButton("📁 Обложка подборки")],
+        [KeyboardButton("🔙 Главное меню")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 # ------------------- Вспомогательные функции -------------------
 async def compress_image(image_bytes: bytes, max_size: int = 1280, quality: int = 85) -> bytes:
@@ -397,7 +418,6 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
         if not prompt or not image_url:
             return None
         return {"prompt": prompt, "image": image_url}
-    # ВАЖНО: именно так ожидает API (imageUrl, mode, prompt опционально)
     if model == "grok-imagine-image-to-video":
         payload = {"imageUrl": image_url, "mode": "normal"}
         if prompt:
@@ -561,6 +581,14 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=get_popular_menu_keyboard()
         )
         return POPULAR_MENU
+    elif text == "📦 Упаковка группы ВК":
+        context.user_data.clear()
+        await update.message.reply_text(
+            "📦 Давайте создадим стильную упаковку для вашей группы ВКонтакте.\n\n"
+            "Введите **название группы**:",
+            reply_markup=get_cancel_keyboard()
+        )
+        return VK_PACKAGE_NAME
     elif text == "🎵 Аудио (озвучка, эффекты)":
         context.user_data.clear()
         await update.message.reply_text("Выберите модель аудио:", reply_markup=get_audio_models_keyboard())
@@ -921,7 +949,6 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif text == "🖼️ 3. Оживить фото":
         context.user_data['pending_action'] = 'animate_photo'
-        # Обновлённое сообщение с указанием платы и модели
         await update.message.reply_text(
             "🔹 **Оживление фото** (модель Wan 2.6, платно: 3 промта)\n\n"
             "Отправьте **фото**, которое хотите оживить (JPEG/PNG).\n"
@@ -1797,6 +1824,213 @@ async def handle_animate_image(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     return MAIN_MENU
 
+# ========== НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УПАКОВКИ ГРУППЫ ВК ==========
+async def vk_package_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    context.user_data['vk_group_name'] = text
+    await update.message.reply_text(
+        "Укажите **тематику** группы (например: кулинария, IT, фитнес, психология):",
+        reply_markup=get_cancel_keyboard()
+    )
+    return VK_PACKAGE_THEME
+
+async def vk_package_theme(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    context.user_data['vk_theme'] = text
+    await update.message.reply_text(
+        "Перечислите **услуги / товары**, которые предоставляет группа (через запятую):",
+        reply_markup=get_cancel_keyboard()
+    )
+    return VK_PACKAGE_SERVICES
+
+async def vk_package_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    context.user_data['vk_services'] = text
+    await update.message.reply_text(
+        "Введите **цвета оформления** (например: #FF5733, #FFFFFF, синий, серый):",
+        reply_markup=get_cancel_keyboard()
+    )
+    return VK_PACKAGE_COLORS
+
+async def vk_package_colors(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    context.user_data['vk_colors'] = text
+
+    await update.message.reply_text(
+        "✅ Параметры сохранены!\n\n"
+        "Теперь выберите, какой элемент упаковки сгенерировать:",
+        reply_markup=get_vk_package_keyboard()
+    )
+    return VK_PACKAGE_MENU
+
+async def vk_package_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    if text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    # Получаем сохранённые параметры
+    group_name = context.user_data.get('vk_group_name', 'Название группы')
+    theme = context.user_data.get('vk_theme', 'тематика')
+    services = context.user_data.get('vk_services', 'услуги')
+    colors = context.user_data.get('vk_colors', 'цвета')
+
+    # Определяем тип и размеры
+    if text == "🖥 Обложка ПК (1920×768)":
+        width, height = 1920, 768
+        element_type = "обложка для ПК"
+        prompt_suffix = "горизонтальный баннер, широкоформатный, для шапки группы ВК"
+    elif text == "📱 Мобильная обложка (1080×1920)":
+        width, height = 1080, 1920
+        element_type = "мобильная обложка"
+        prompt_suffix = "вертикальный баннер, для мобильной версии ВК"
+    elif text == "🔘 Кнопки меню (376×256)":
+        width, height = 376, 256
+        element_type = "кнопка меню"
+        prompt_suffix = "иконка или кнопка для меню сообщества, минималистичный дизайн"
+    elif text == "📊 Виджеты (480×720) ×3":
+        return await generate_multiple_widgets(update, context, group_name, theme, services, colors)
+    elif text == "👤 Аватарка (1080×1080)":
+        width, height = 1080, 1080
+        element_type = "аватарка"
+        prompt_suffix = "квадратная аватарка сообщества, яркая, запоминающаяся"
+    elif text == "🛍 Товары (карточки)":
+        width, height = 800, 800
+        element_type = "карточки товаров"
+        prompt_suffix = "коллаж из карточек товаров, каждая карточка содержит название и цену (условно)"
+    elif text == "📁 Обложка подборки":
+        width, height = 1200, 800
+        element_type = "обложка для подборки товаров"
+        prompt_suffix = "обложка для каталога или подборки товаров ВК, привлекательная"
+    else:
+        await update.message.reply_text("Пожалуйста, выберите пункт из меню.", reply_markup=get_vk_package_keyboard())
+        return VK_PACKAGE_MENU
+
+    # Для всех, кроме виджетов, генерируем одно изображение
+    prompt = (
+        f"Создай {element_type} для группы ВКонтакте.\n"
+        f"Название группы: {group_name}\n"
+        f"Тематика: {theme}\n"
+        f"Услуги/товары: {services}\n"
+        f"Цветовая гамма: {colors}\n"
+        f"Размер изображения: {width}×{height} пикселей.\n"
+        f"Стиль: {prompt_suffix}. Современный, чистый, профессиональный дизайн. "
+        f"Текст должен быть хорошо читаемым. Используй указанные цвета."
+    )
+
+    return await generate_vk_image(update, context, prompt, width, height, element_type)
+
+async def generate_multiple_widgets(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                     group_name, theme, services, colors):
+    """Генерирует три виджета (480×720) последовательно"""
+    user_id = update.effective_user.id
+    used = get_weekly_image_count(user_id)
+    paid = False
+    # Проверка лимита / списания (как в handle_media_input)
+    if used >= 5:
+        balance = get_user_balance(user_id)
+        if balance >= PAID_IMAGE_PRICE:
+            if not deduct_balance(user_id, PAID_IMAGE_PRICE):
+                await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
+                return MAIN_MENU
+            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов за первый виджет.", reply_markup=get_cancel_keyboard())
+            paid = True
+        else:
+            await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+
+    for i in range(1, 4):
+        prompt = (
+            f"Создай виджет {i} из трёх для группы ВКонтакте.\n"
+            f"Название группы: {group_name}\n"
+            f"Тематика: {theme}\n"
+            f"Услуги/товары: {services}\n"
+            f"Цветовая гамма: {colors}\n"
+            f"Размер: 480×720 пикселей.\n"
+            f"Виджет может содержать информацию: акция, услуга, контакт или кнопка. "
+            f"Стиль минималистичный, информативный. Все три виджета должны быть в едином стиле."
+        )
+        result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, 480, 720, f"виджет {i}")
+        if result_bytes:
+            compressed = await compress_image(result_bytes)
+            await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"📊 Виджет {i}")
+            await update.message.reply_text(f"📥 Скачать оригинал виджета {i}: {media_url}")
+            if not paid and i == 1 and used < 5:
+                increment_weekly_image_count(user_id)   # увеличиваем счётчик только один раз за три виджета
+        else:
+            await update.message.reply_text(f"❌ Не удалось сгенерировать виджет {i}.")
+
+    await update.message.reply_text("Все три виджета сгенерированы! Что дальше?", reply_markup=get_vk_package_keyboard())
+    return VK_PACKAGE_MENU
+
+async def generate_vk_image(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, width: int, height: int, element_type: str):
+    """Обёртка для генерации одного изображения с проверкой лимита и отправкой"""
+    user_id = update.effective_user.id
+    used = get_weekly_image_count(user_id)
+    paid = False
+    if used >= 5:
+        balance = get_user_balance(user_id)
+        if balance >= PAID_IMAGE_PRICE:
+            if not deduct_balance(user_id, PAID_IMAGE_PRICE):
+                await update.message.reply_text("❌ Ошибка списания токенов.", reply_markup=get_main_keyboard())
+                return MAIN_MENU
+            await update.message.reply_text(f"⚠️ Бесплатный лимит (5/неделю) исчерпан. Списано {PAID_IMAGE_PRICE} промтов.", reply_markup=get_cancel_keyboard())
+            paid = True
+        else:
+            await update.message.reply_text(f"❌ Бесплатный лимит исчерпан. Недостаточно промтов. Нужно: {PAID_IMAGE_PRICE}.", reply_markup=get_main_keyboard())
+            return MAIN_MENU
+
+    result_bytes, media_url = await generate_vk_image_raw(update, context, prompt, width, height, element_type)
+    if result_bytes:
+        compressed = await compress_image(result_bytes)
+        await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {element_type} (сжатое)")
+        await update.message.reply_text(f"📥 Скачать оригинал: {media_url}")
+        if not paid and used < 5:
+            increment_weekly_image_count(user_id)
+        save_message(user_id, "user", f"VK package: {element_type}")
+        save_message(user_id, "assistant", "Изображение сгенерировано")
+    else:
+        await update.message.reply_text(f"❌ Не удалось получить результат для {element_type}.")
+        if paid:
+            add_balance(user_id, PAID_IMAGE_PRICE)
+
+    await update.message.reply_text("Что дальше?", reply_markup=get_vk_package_keyboard())
+    return VK_PACKAGE_MENU
+
+async def generate_vk_image_raw(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, width: int, height: int, element_type: str):
+    """Низкоуровневая генерация через MashaGPT"""
+    model = "nano-banana-2"  # можно заменить на flux-2 или midjourney
+    # Добавляем размер в параметры payload
+    payload = {
+        "prompt": prompt,
+        "aspectRatio": f"{width}:{height}",
+        "resolution": "1K"
+    }
+    try:
+        result_bytes, media_url = await masha_media_generate(model, payload)
+        return result_bytes, media_url
+    except Exception as e:
+        logger.exception(f"Ошибка генерации {element_type}")
+        await update.message.reply_text(f"❌ Ошибка генерации: {str(e)[:200]}")
+        return None, None
+
 # ========== ОБРАБОТЧИКИ ДЛЯ ROBOKASSA (с кнопками выбора суммы) ==========
 async def inline_robokassa_topup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2030,8 +2264,13 @@ async def main_async():
                 MessageHandler(filters.PHOTO, handle_animate_photo_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)
             ],
-            # Состояние AWAIT_MODE_FOR_ANIMATE УДАЛЕНО – больше не используется
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
+            # New VK packaging states
+            VK_PACKAGE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_name)],
+            VK_PACKAGE_THEME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_theme)],
+            VK_PACKAGE_SERVICES: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_services)],
+            VK_PACKAGE_COLORS: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_colors)],
+            VK_PACKAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_menu)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
