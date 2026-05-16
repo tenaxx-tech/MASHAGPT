@@ -36,6 +36,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+PAID_IMAGE_PRICE = 2
+ADMIN_IDS = [466829859]   # замените на свой ID
+FONT_PATH = "Roboto-Regular.ttf"   # путь к шрифту (можно скачать любой)
+
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
 AWAIT_FACE_SWAP_TARGET, AWAIT_FACE_SWAP_SOURCE, AWAIT_IMAGE_FOR_EDIT, AWAIT_PROMPT_FOR_EDIT = 9, 10, 11, 12
