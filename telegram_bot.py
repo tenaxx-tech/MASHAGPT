@@ -1,6 +1,3 @@
-# ==================== ЧАСТЬ 1 ====================
-# Импорты, конфигурация, клавиатуры, вспомогательные функции, ВСЕ СТАРЫЕ ОБРАБОТЧИКИ (полностью)
-
 import asyncio
 import io
 import json
@@ -38,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 PAID_IMAGE_PRICE = 2
 ADMIN_IDS = [466829859]   # замените на свой ID
-FONT_PATH = "Roboto-Regular.ttf"   # путь к шрифту (можно скачать любой)
+FONT_PATH = "Roboto-Regular.ttf"
 
 # ------------------- Состояния -------------------
 MAIN_MENU, TEXT_GEN, IMAGE_GEN, VIDEO_GEN, EDIT_GEN, AUDIO_GEN, AVATAR_GEN, DIALOG, AWAIT_PROMPT = range(9)
@@ -47,7 +44,8 @@ AWAIT_IMAGE_FOR_AVATAR, AWAIT_AUDIO_FOR_AVATAR, AWAIT_VIDEO_FOR_ANIMATE, AWAIT_I
 POPULAR_MENU, AWAIT_PROMPT_FOR_IMAGE, AWAIT_PHOTO_FOR_ANIMATE, AWAIT_MODE_FOR_ANIMATE, AWAIT_PROMPT_FOR_ANIMATE = 18, 19, 20, 21, 22
 AWAIT_PROMPT_FOR_DEEPSEEK = 23
 
-# Состояния для упаковки ВК
+AWAIT_RESIZE_IMAGE, AWAIT_RESIZE_SIZE = 40, 41
+
 VK_PACKAGE_NAME, VK_PACKAGE_THEME, VK_PACKAGE_PRODUCTS, VK_PACKAGE_SERVICES, VK_PACKAGE_ADVANTAGES, VK_PACKAGE_COLORS, VK_PACKAGE_ELEMENT_SELECT, VK_PACKAGE_BACKGROUND_GENERATED, VK_PACKAGE_AWAIT_TEXT_CUSTOM = 30, 31, 32, 33, 34, 35, 36, 37, 38
 
 # ------------------- Цены моделей -------------------
@@ -63,6 +61,7 @@ MODEL_PRICES = {
     "z-image": 0, "grok-imagine-text-to-image": 0,
     "flux-2": 0, "nano-banana-2": 0, "nano-banana-pro": 0,
     "midjourney": 0, "gpt-image-1-5-text-to-image": 0, "gpt-image-1-5-image-to-image": 0,
+    "gpt-image-2": 0,
     "grok-imagine-text-to-video": 1, "wan-2-6-text-to-video": 3, "wan-2-5-text-to-video": 3,
     "wan-2-6-image-to-video": 3, "wan-2-6-video-to-video": 3, "wan-2-5-image-to-video": 3,
     "sora-2-text-to-video": 3, "sora-2-image-to-video": 3, "veo-3-1": 5,
@@ -120,6 +119,7 @@ def get_popular_menu_keyboard():
         [KeyboardButton("✨ 6. Улучшить качество")],
         [KeyboardButton("🔄 7. Заменить лицо")],
         [KeyboardButton("🎨 8. Редактировать изображение (img2img)")],
+        [KeyboardButton("🖼 9. Изменить размер изображения")],
         [KeyboardButton("🔙 Главное меню")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -258,7 +258,8 @@ async def compress_image(image_bytes: bytes, max_size: int = 1920, quality: int 
         return output.getvalue()
 
 async def send_long_message(update: Update, text: str):
-    if not text: return
+    if not text:
+        return
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
 
@@ -288,7 +289,8 @@ async def create_task(model: str, payload: dict, retries=3):
                     return data.get("id")
         except Exception as e:
             logger.error(f"Ошибка создания задачи {model}: {e}")
-            if attempt == retries-1: return None
+            if attempt == retries - 1:
+                return None
             await asyncio.sleep(2)
     return None
 
@@ -343,7 +345,7 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
     headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
     payload = {"model": model, "messages": messages, "max_completion_tokens": 1024, "temperature": 1.0}
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers, timeout=120) as resp:
+        async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as resp:
             if resp.status != 200:
                 error_text = await resp.text()
                 raise Exception(f"Masha error {resp.status}: {error_text}")
@@ -354,31 +356,49 @@ async def masha_text_generate(prompt: str, history: List[Tuple[str, str]], model
             return content or ""
 
 async def masha_media_generate(model: str, payload: dict):
-    task_id = await create_task(model, payload)
-    if not task_id:
-        raise Exception("Не удалось создать задачу")
-    result = await wait_for_task(task_id)
-    if not result:
-        raise Exception("Не удалось получить результат")
-    if not isinstance(result, dict):
-        raise Exception(f"Неверный формат ответа: {result}")
-    outputs = result.get("output", [])
-    if not outputs:
-        raise Exception("Нет output в ответе")
-    if isinstance(outputs[0], dict):
-        media_url = outputs[0].get("url")
-    elif isinstance(outputs[0], str):
-        media_url = outputs[0]
+    if model == "gpt-image-2":
+        url = f"{MASHA_BASE_URL}/images/generations"
+        headers = {"Content-Type": "application/json", "x-api-key": MASHA_API_KEY}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status != 200:
+                    error_body = await resp.text()
+                    raise Exception(f"GPT Image 2 error {resp.status}: {error_body}")
+                data = await resp.json()
+                if "data" in data and len(data["data"]) > 0 and "url" in data["data"][0]:
+                    media_url = data["data"][0]["url"]
+                else:
+                    raise Exception("Неожиданный формат ответа")
+                async with session.get(media_url) as img_resp:
+                    if img_resp.status != 200:
+                        raise Exception(f"Ошибка скачивания: {img_resp.status}")
+                    return await img_resp.read(), media_url
     else:
-        raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
-    if not media_url:
-        raise Exception("Нет URL в ответе")
-    async with aiohttp.ClientSession() as session:
-        async with session.get(media_url) as resp:
-            if resp.status != 200:
-                raise Exception(f"Ошибка скачивания файла: {resp.status}")
-            file_bytes = await resp.read()
-    return file_bytes, media_url
+        task_id = await create_task(model, payload)
+        if not task_id:
+            raise Exception("Не удалось создать задачу")
+        result = await wait_for_task(task_id)
+        if not result:
+            raise Exception("Не удалось получить результат")
+        if not isinstance(result, dict):
+            raise Exception(f"Неверный формат ответа: {result}")
+        outputs = result.get("output", [])
+        if not outputs:
+            raise Exception("Нет output")
+        if isinstance(outputs[0], dict):
+            media_url = outputs[0].get("url")
+        elif isinstance(outputs[0], str):
+            media_url = outputs[0]
+        else:
+            raise Exception(f"Неизвестный тип output: {type(outputs[0])}")
+        if not media_url:
+            raise Exception("Нет URL")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(media_url) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Ошибка скачивания: {resp.status}")
+                file_bytes = await resp.read()
+        return file_bytes, media_url
 
 def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict:
     if model in ("codeplugtech-face-swap", "cdlingram-face-swap"):
@@ -440,7 +460,7 @@ def build_payload(model: str, prompt: str = None, image_url: str = None) -> dict
     }
     return payloads.get(model, None)
 
-# ==================== ВСЕ СТАРЫЕ ОБРАБОТЧИКИ ====================
+# ==================== ВСЕ ОБРАБОТЧИКИ (включая новые) ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     init_db()
     user_id = update.effective_user.id
@@ -645,22 +665,10 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['media_category'] = 'video'
             input_type = MODEL_INPUT_TYPE.get(model_id, ("text",))
             if input_type == ("video", "image"):
-                await update.message.reply_text(
-                    "🔹 Анимация персонажа\n\n"
-                    "1️⃣ Отправьте **видео-референс** (движение)\n"
-                    "2️⃣ Затем отправьте **изображение персонажа**\n\n"
-                    "Отправьте первое видео:",
-                    reply_markup=get_cancel_keyboard()
-                )
+                await update.message.reply_text("🔹 Анимация персонажа\n\n1️⃣ Отправьте видео-референс\n2️⃣ Затем изображение персонажа\nОтправьте первое видео:", reply_markup=get_cancel_keyboard())
                 return AWAIT_VIDEO_FOR_ANIMATE
             elif input_type == ("image", "text"):
-                await update.message.reply_text(
-                    "🔹 Image-to-Video\n\n"
-                    "1️⃣ Отправьте **изображение**\n"
-                    "2️⃣ Затем отправьте **текстовое описание** движения\n\n"
-                    "Отправьте первое фото:",
-                    reply_markup=get_cancel_keyboard()
-                )
+                await update.message.reply_text("🔹 Image-to-Video\n\n1️⃣ Отправьте изображение\n2️⃣ Затем текстовое описание\nОтправьте первое фото:", reply_markup=get_cancel_keyboard())
                 return AWAIT_IMAGE_FOR_EDIT
             else:
                 await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите описание видео:", reply_markup=get_cancel_keyboard())
@@ -700,22 +708,10 @@ async def handle_model_selection(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data['media_category'] = 'avatar'
             input_type = MODEL_INPUT_TYPE.get(model_id, ("image", "audio"))
             if input_type == ("image", "audio"):
-                await update.message.reply_text(
-                    "🔹 Говорящий аватар\n\n"
-                    "1️⃣ Отправьте **фото лица**\n"
-                    "2️⃣ Затем отправьте **аудиофайл** (MP3/WAV)\n\n"
-                    "Отправьте первое фото:",
-                    reply_markup=get_cancel_keyboard()
-                )
+                await update.message.reply_text("🔹 Говорящий аватар\n\n1️⃣ Отправьте фото лица\n2️⃣ Затем отправьте аудиофайл (MP3/WAV)\nОтправьте первое фото:", reply_markup=get_cancel_keyboard())
                 return AWAIT_IMAGE_FOR_AVATAR
             elif input_type == ("video", "image"):
-                await update.message.reply_text(
-                    "🔹 Анимация персонажа\n\n"
-                    "1️⃣ Отправьте **видео-референс** (движение)\n"
-                    "2️⃣ Затем отправьте **изображение персонажа**\n\n"
-                    "Отправьте первое видео:",
-                    reply_markup=get_cancel_keyboard()
-                )
+                await update.message.reply_text("🔹 Анимация персонажа\n\n1️⃣ Отправьте видео-референс\n2️⃣ Отправьте изображение персонажа\nОтправьте первое видео:", reply_markup=get_cancel_keyboard())
                 return AWAIT_VIDEO_FOR_ANIMATE
             else:
                 await update.message.reply_text(f"Выбрана модель: {label}\n\nВведите описание:", reply_markup=get_cancel_keyboard())
@@ -899,6 +895,16 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['media_category'] = 'image'
         await update.message.reply_text("Отправьте изображение для редактирования:", reply_markup=get_cancel_keyboard())
         return AWAIT_IMAGE_FOR_EDIT
+    elif text == "🖼 9. Изменить размер изображения":
+        context.user_data.clear()
+        await update.message.reply_text(
+            "🖼 *Изменить размер изображения*\n\n"
+            "Отправьте изображение, размер которого нужно изменить.\n"
+            "Затем укажите новый размер в формате ШиринаxВысота (например, 1024x1024 или 1920x1080).",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="Markdown"
+        )
+        return AWAIT_RESIZE_IMAGE
     elif text in ("CodePlugTech (быстрый)", "CDIngram (качественный)"):
         model_id = "codeplugtech-face-swap" if "CodePlugTech" in text else "cdlingram-face-swap"
         context.user_data['selected_model'] = model_id
@@ -910,6 +916,88 @@ async def handle_popular_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Выберите пункт из меню.", reply_markup=get_popular_menu_keyboard())
         return POPULAR_MENU
 
+# ------------------- НОВЫЙ ОБРАБОТЧИК ИЗМЕНЕНИЯ РАЗМЕРА (GPT Image 2) -------------------
+async def handle_resize_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.text and update.message.text == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    if not update.message.photo:
+        await update.message.reply_text("Пожалуйста, отправьте изображение.", reply_markup=get_cancel_keyboard())
+        return AWAIT_RESIZE_IMAGE
+    photo_file = await update.message.photo[-1].get_file()
+    context.user_data['resize_image_url'] = photo_file.file_path
+    await update.message.reply_text(
+        "✅ Изображение получено.\n\n"
+        "Теперь введите желаемый размер в формате ШиринаxВысота (например, 1024x1024, 1920x1080).\n"
+        "Пресеты: 1:1 → 1024x1024, 16:9 → 1920x1080, 9:16 → 1080x1920",
+        reply_markup=get_cancel_keyboard()
+    )
+    return AWAIT_RESIZE_SIZE
+
+async def handle_resize_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    size_input = update.message.text.strip().lower()
+    if size_input == "🔙 Главное меню":
+        context.user_data.clear()
+        await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    preset_map = {"1:1": "1024x1024", "квадрат": "1024x1024", "16:9": "1920x1080", "1920x1080": "1920x1080", "9:16": "1080x1920", "1080x1920": "1080x1920"}
+    if size_input in preset_map:
+        size = preset_map[size_input]
+    else:
+        if 'x' not in size_input:
+            await update.message.reply_text("❌ Неверный формат. Используйте ШиринаxВысота.", reply_markup=get_cancel_keyboard())
+            return AWAIT_RESIZE_SIZE
+        parts = size_input.split('x')
+        if len(parts) != 2:
+            await update.message.reply_text("❌ Неверный формат.", reply_markup=get_cancel_keyboard())
+            return AWAIT_RESIZE_SIZE
+        try:
+            w, h = int(parts[0]), int(parts[1])
+            if w <= 0 or h <= 0: raise ValueError
+            size = f"{w}x{h}"
+        except:
+            await update.message.reply_text("❌ Ширина и высота должны быть положительными числами.", reply_markup=get_cancel_keyboard())
+            return AWAIT_RESIZE_SIZE
+
+    image_url = context.user_data.get('resize_image_url')
+    if not image_url:
+        await update.message.reply_text("Ошибка: изображение не найдено.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    price = 2
+    if get_user_balance(user_id) < price:
+        await update.message.reply_text(f"❌ Недостаточно промтов. Нужно {price}.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+    if not deduct_balance(user_id, price):
+        await update.message.reply_text("❌ Ошибка списания.", reply_markup=get_main_keyboard())
+        return MAIN_MENU
+
+    await update.message.reply_text(f"🖼 Изменяю размер до {size}. Пожалуйста, подождите...")
+
+    payload = {"model": "gpt-image-2", "prompt": f"Измени размер этого изображения ровно до {size}. Сохрани содержимое.", "n": 1, "size": size, "response_format": "url"}
+    try:
+        result_bytes, media_url = await masha_media_generate("gpt-image-2", payload)
+        if result_bytes:
+            compressed = await compress_image(result_bytes)
+            await update.message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 Изображение изменено до {size}")
+            await update.message.reply_text(f"📥 Оригинал: {media_url}")
+            save_message(user_id, "user", f"resize image to {size}")
+            save_message(user_id, "assistant", "Изображение изменено")
+        else:
+            await update.message.reply_text("❌ Не удалось изменить размер.")
+            add_balance(user_id, price)
+    except Exception as e:
+        logger.exception("Ошибка изменения размера")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+        add_balance(user_id, price)
+
+    await update.message.reply_text("Что дальше?", reply_markup=get_popular_menu_keyboard())
+    return POPULAR_MENU
+
+# ------------------- ОСТАЛЬНЫЕ ОБРАБОТЧИКИ (полностью) -------------------
 async def handle_deepseek_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_input = update.message.text
@@ -1516,30 +1604,7 @@ async def run_web_server_with_robokassa(port, bot_instance):
         await runner.cleanup()
         raise
 
-# ==================== НОВЫЕ ОБРАБОТЧИКИ УПАКОВКИ ВК (двухэтапные) ====================
-# Они находятся в следующем сообщении (Часть 2), т.к. объём кода превышает лимит.
-# Для полного кода скопируйте также Часть 2 (ниже).
-# ==================== ЧАСТЬ 2 ====================
-# Новые обработчики упаковки ВК (двухэтапная генерация: фон -> текст)
-
-def wrap_text(text: str, font, max_width: int, draw: ImageDraw.Draw) -> List[str]:
-    words = text.split()
-    lines = []
-    current_line = []
-    for word in words:
-        test_line = ' '.join(current_line + [word])
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        width = bbox[2] - bbox[0]
-        if width <= max_width:
-            current_line.append(word)
-        else:
-            if current_line:
-                lines.append(' '.join(current_line))
-            current_line = [word]
-    if current_line:
-        lines.append(' '.join(current_line))
-    return lines
-
+# ------------------- УПАКОВКА ГРУППЫ ВК (полностью) -------------------
 def wrap_text(text: str, font, max_width: int, draw: ImageDraw.Draw) -> List[str]:
     words = text.split()
     lines = []
@@ -1566,8 +1631,6 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
             img = img.resize(target_size, Image.Resampling.LANCZOS)
         draw = ImageDraw.Draw(img)
         width, height = img.size
-
-        # Загрузка шрифтов
         try:
             base_font_size = max(20, min(width, height) // 25)
             font = ImageFont.truetype(FONT_PATH, base_font_size)
@@ -1575,22 +1638,17 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
             font_large = ImageFont.truetype(FONT_PATH, base_font_size + 8)
         except:
             font = font_small = font_large = ImageFont.load_default()
-
-        # Получение высоты шрифтов (ascent + descent)
         def get_font_height(f):
             ascent, descent = f.getmetrics()
             return ascent + descent
-
         font_height_large = get_font_height(font_large)
         font_height_small = get_font_height(font_small)
-
         text_color = (255, 255, 255)
         shadow_color = (0, 0, 0)
         top_margin = height // 5
         left_margin = width // 20
         right_margin = width // 20
         max_text_width = width - left_margin - right_margin
-
         title = text_data.get('title', 'Название').upper()
         advantages = text_data.get('advantages', '').upper()
         adv_list = [a.strip() for a in advantages.split(',') if a.strip()]
@@ -1598,29 +1656,20 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
         services = text_data.get('services', '').upper()
         prod_list = [p.strip() for p in products.split(',') if p.strip()]
         serv_list = [s.strip() for s in services.split(',') if s.strip()]
-
         y = top_margin + 10
-
-        # Левый блок: название
         title_lines = wrap_text(title, font_large, max_text_width // 2, draw)
         for line in title_lines:
             draw.text((left_margin, y), line, font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
             y += font_height_large + 5
-
         y += 15
-
-        # Преимущества
         for adv in adv_list[:4]:
             adv_lines = wrap_text(adv, font_small, max_text_width // 2, draw)
             for line in adv_lines:
                 draw.text((left_margin, y), line, font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
                 y += font_height_small + 3
             y += 5
-
-        # Правый блок
         x_right = width - max_text_width // 2 - right_margin
         y_right = top_margin + 10
-
         if prod_list:
             draw.text((x_right, y_right), "ТОВАРЫ", font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
             y_right += font_height_large + 10
@@ -1630,9 +1679,7 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
                     draw.text((x_right, y_right), f"• {line}", font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
                     y_right += font_height_small + 3
                 y_right += 5
-
         y_right += 15
-
         if serv_list:
             draw.text((x_right, y_right), "УСЛУГИ", font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
             y_right += font_height_large + 10
@@ -1642,7 +1689,6 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
                     draw.text((x_right, y_right), f"✓ {line}", font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
                     y_right += font_height_small + 3
                 y_right += 5
-
         output = io.BytesIO()
         img.save(output, format='PNG')
         return output.getvalue()
@@ -1707,7 +1753,7 @@ async def vk_package_name(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_group_name'] = update.message.text
-    await update.message.reply_text("Укажите **тематику** группы:", reply_markup=get_cancel_keyboard())
+    await update.message.reply_text("Укажите тематику группы:", reply_markup=get_cancel_keyboard())
     return VK_PACKAGE_THEME
 
 async def vk_package_theme(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1716,7 +1762,7 @@ async def vk_package_theme(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_theme'] = update.message.text
-    await update.message.reply_text("Перечислите **товары** (через запятую):", reply_markup=get_cancel_keyboard())
+    await update.message.reply_text("Перечислите товары (через запятую):", reply_markup=get_cancel_keyboard())
     return VK_PACKAGE_PRODUCTS
 
 async def vk_package_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1725,7 +1771,7 @@ async def vk_package_products(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_products'] = update.message.text
-    await update.message.reply_text("Перечислите **услуги** (через запятую):", reply_markup=get_cancel_keyboard())
+    await update.message.reply_text("Перечислите услуги (через запятую):", reply_markup=get_cancel_keyboard())
     return VK_PACKAGE_SERVICES
 
 async def vk_package_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1734,7 +1780,7 @@ async def vk_package_services(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_services'] = update.message.text
-    await update.message.reply_text("Напишите **преимущества** (через запятую):", reply_markup=get_cancel_keyboard())
+    await update.message.reply_text("Напишите преимущества (через запятую):", reply_markup=get_cancel_keyboard())
     return VK_PACKAGE_ADVANTAGES
 
 async def vk_package_advantages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1743,7 +1789,7 @@ async def vk_package_advantages(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_advantages'] = update.message.text
-    await update.message.reply_text("Введите **цвета оформления** (например: #FF5733, синий, серый):", reply_markup=get_cancel_keyboard())
+    await update.message.reply_text("Введите цвета оформления (например: #FF5733, синий):", reply_markup=get_cancel_keyboard())
     return VK_PACKAGE_COLORS
 
 async def vk_package_colors(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1752,12 +1798,7 @@ async def vk_package_colors(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
         return MAIN_MENU
     context.user_data['vk_colors'] = update.message.text
-    await update.message.reply_text(
-        "✅ Параметры сохранены!\n\n"
-        "Теперь выберите элемент упаковки.\n"
-        "Сначала будет создан фон (без текста), затем вы сможете наложить текст.",
-        reply_markup=get_vk_package_element_keyboard()
-    )
+    await update.message.reply_text("✅ Параметры сохранены!\nВыберите элемент упаковки:", reply_markup=get_vk_package_element_keyboard())
     return VK_PACKAGE_ELEMENT_SELECT
 
 async def vk_package_element_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1811,7 +1852,7 @@ async def vk_package_element_select(update: Update, context: ContextTypes.DEFAUL
         w, h, elem = 1200, 1200, "обложка подборки"
         prompt_bg = f"Создай фон для обложки подборки товаров ВК. Тема: {theme}. Цвета: {colors}. Без текста. Размер {w}×{h}."
     else:
-        await update.message.reply_text("Пожалуйста, выберите элемент из меню.", reply_markup=get_vk_package_element_keyboard())
+        await update.message.reply_text("Выберите пункт из меню.", reply_markup=get_vk_package_element_keyboard())
         return VK_PACKAGE_ELEMENT_SELECT
 
     context.user_data['vk_elem_type'] = elem
@@ -1822,8 +1863,7 @@ async def vk_package_element_select(update: Update, context: ContextTypes.DEFAUL
     img_bytes, url = await generate_background_image(prompt_bg, w, h)
     if img_bytes:
         context.user_data['vk_background_bytes'] = img_bytes
-        context.user_data['vk_background_url'] = url
-        compressed = await compress_image(img_bytes, max_size=1920, quality=85)
+        compressed = await compress_image(img_bytes)
         await update.message.reply_photo(
             photo=io.BytesIO(compressed),
             caption=f"✅ Фон для {elem} готов.\n\n"
@@ -1857,11 +1897,7 @@ async def vk_handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await generate_final_image(update, context, query.message)
     elif query.data == "vk_custom_text":
         await query.message.reply_text(
-            "Введите текст в формате:\n\n"
-            "Название группы: ...\n"
-            "Товары: товар1, товар2, ...\n"
-            "Услуги: услуга1, услуга2, ...\n"
-            "Преимущества: преимущество1, преимущество2, ...",
+            "Введите текст в формате:\n\nНазвание группы: ...\nТовары: ...\nУслуги: ...\nПреимущества: ...",
             reply_markup=get_cancel_keyboard()
         )
         return VK_PACKAGE_AWAIT_TEXT_CUSTOM
@@ -1909,16 +1945,16 @@ async def generate_final_image(update, context, message):
     if backgrounds:
         for i, bg_bytes in enumerate(backgrounds, 1):
             img_with_text = add_text_to_image(bg_bytes, text_data, target_size=(width, height))
-            compressed = await compress_image(img_with_text, max_size=1920, quality=85)
+            compressed = await compress_image(img_with_text)
             await message.reply_photo(photo=io.BytesIO(compressed), caption=f"📊 Виджет {i}")
         await message.reply_text("✅ Все виджеты готовы!", reply_markup=get_main_keyboard())
     else:
         bg_bytes = context.user_data.get('vk_background_bytes')
         if not bg_bytes:
-            await message.reply_text("❌ Ошибка: фон не найден. Начните заново.")
+            await message.reply_text("❌ Ошибка: фон не найден.")
             return
         img_with_text = add_text_to_image(bg_bytes, text_data, target_size=(width, height))
-        compressed = await compress_image(img_with_text, max_size=1920, quality=85)
+        compressed = await compress_image(img_with_text)
         await message.reply_photo(photo=io.BytesIO(compressed), caption=f"🖼 {elem_type} готово!")
         await message.reply_text("Что дальше?", reply_markup=get_main_keyboard())
     save_message(user_id, "user", f"Упаковка ВК: {elem_type}")
@@ -1932,7 +1968,6 @@ async def main_async():
         return
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # ConversationHandler со всеми состояниями
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -1963,6 +1998,8 @@ async def main_async():
             AWAIT_PROMPT_FOR_IMAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_to_image)],
             AWAIT_PHOTO_FOR_ANIMATE: [MessageHandler(filters.PHOTO, handle_animate_photo_photo), MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_photo)],
             AWAIT_PROMPT_FOR_ANIMATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_animate_photo_prompt)],
+            AWAIT_RESIZE_IMAGE: [MessageHandler(filters.PHOTO, handle_resize_image), MessageHandler(filters.TEXT & ~filters.COMMAND, handle_resize_image)],
+            AWAIT_RESIZE_SIZE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_resize_size)],
             VK_PACKAGE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_name)],
             VK_PACKAGE_THEME: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_theme)],
             VK_PACKAGE_PRODUCTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, vk_package_products)],
