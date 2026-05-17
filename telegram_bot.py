@@ -1540,6 +1540,24 @@ def wrap_text(text: str, font, max_width: int, draw: ImageDraw.Draw) -> List[str
         lines.append(' '.join(current_line))
     return lines
 
+def wrap_text(text: str, font, max_width: int, draw: ImageDraw.Draw) -> List[str]:
+    words = text.split()
+    lines = []
+    current_line = []
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        bbox = draw.textbbox((0, 0), test_line, font=font)
+        width = bbox[2] - bbox[0]
+        if width <= max_width:
+            current_line.append(word)
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+            current_line = [word]
+    if current_line:
+        lines.append(' '.join(current_line))
+    return lines
+
 def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = None) -> bytes:
     with Image.open(io.BytesIO(image_bytes)) as img:
         if img.mode != 'RGB':
@@ -1548,6 +1566,8 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
             img = img.resize(target_size, Image.Resampling.LANCZOS)
         draw = ImageDraw.Draw(img)
         width, height = img.size
+
+        # Загрузка шрифтов
         try:
             base_font_size = max(20, min(width, height) // 25)
             font = ImageFont.truetype(FONT_PATH, base_font_size)
@@ -1555,12 +1575,22 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
             font_large = ImageFont.truetype(FONT_PATH, base_font_size + 8)
         except:
             font = font_small = font_large = ImageFont.load_default()
+
+        # Получение высоты шрифтов (ascent + descent)
+        def get_font_height(f):
+            ascent, descent = f.getmetrics()
+            return ascent + descent
+
+        font_height_large = get_font_height(font_large)
+        font_height_small = get_font_height(font_small)
+
         text_color = (255, 255, 255)
         shadow_color = (0, 0, 0)
         top_margin = height // 5
         left_margin = width // 20
         right_margin = width // 20
         max_text_width = width - left_margin - right_margin
+
         title = text_data.get('title', 'Название').upper()
         advantages = text_data.get('advantages', '').upper()
         adv_list = [a.strip() for a in advantages.split(',') if a.strip()]
@@ -1568,39 +1598,51 @@ def add_text_to_image(image_bytes: bytes, text_data: dict, target_size: tuple = 
         services = text_data.get('services', '').upper()
         prod_list = [p.strip() for p in products.split(',') if p.strip()]
         serv_list = [s.strip() for s in services.split(',') if s.strip()]
+
         y = top_margin + 10
+
+        # Левый блок: название
         title_lines = wrap_text(title, font_large, max_text_width // 2, draw)
         for line in title_lines:
             draw.text((left_margin, y), line, font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-            y += font_large.getbbox()[3] + 5
+            y += font_height_large + 5
+
         y += 15
+
+        # Преимущества
         for adv in adv_list[:4]:
             adv_lines = wrap_text(adv, font_small, max_text_width // 2, draw)
             for line in adv_lines:
                 draw.text((left_margin, y), line, font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-                y += font_small.getbbox()[3] + 3
+                y += font_height_small + 3
             y += 5
+
+        # Правый блок
         x_right = width - max_text_width // 2 - right_margin
         y_right = top_margin + 10
+
         if prod_list:
             draw.text((x_right, y_right), "ТОВАРЫ", font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-            y_right += font_large.getbbox()[3] + 10
+            y_right += font_height_large + 10
             for prod in prod_list[:6]:
                 prod_lines = wrap_text(prod, font_small, max_text_width // 2, draw)
                 for line in prod_lines:
                     draw.text((x_right, y_right), f"• {line}", font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-                    y_right += font_small.getbbox()[3] + 3
+                    y_right += font_height_small + 3
                 y_right += 5
+
         y_right += 15
+
         if serv_list:
             draw.text((x_right, y_right), "УСЛУГИ", font=font_large, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-            y_right += font_large.getbbox()[3] + 10
+            y_right += font_height_large + 10
             for serv in serv_list[:6]:
                 serv_lines = wrap_text(serv, font_small, max_text_width // 2, draw)
                 for line in serv_lines:
                     draw.text((x_right, y_right), f"✓ {line}", font=font_small, fill=text_color, stroke_width=1, stroke_fill=shadow_color)
-                    y_right += font_small.getbbox()[3] + 3
+                    y_right += font_height_small + 3
                 y_right += 5
+
         output = io.BytesIO()
         img.save(output, format='PNG')
         return output.getvalue()
